@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 4.0)
 project(before_i_rise CXX CUDA)
 
 set(CMAKE_CUDA_STANDARD 20)
-add_library(before_i_rise STATIC src/gemm/gemm.cu)
+add_library(before_i_rise STATIC src/gemm/gemm.cu src/reduce/reduce.cu)
 set_target_properties(before_i_rise PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
 add_executable(test test/main.cpp)
