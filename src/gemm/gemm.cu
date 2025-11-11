@@ -1,5 +1,5 @@
 #include <cassert>
-
+#include <cstdint>
 template<int const BLOCKSIZE>
 __global__ void sgemm_shared_mem_block(int M, int N, int K, float alpha,
                                        float const *A, float const *B,
@@ -35,7 +35,15 @@ __global__ void sgemm_shared_mem_block(int M, int N, int K, float alpha,
     C[threadRow * N + threadCol] =
             alpha * tmp + beta * C[threadRow * N + threadCol];
 }
+// computing TM*TN elements pre thread
+template<int const BLOCKSIZE, int const TM, int const TN>
+__global__ void sgemm_shared_mem_2d(int M, int N, int K, float alpha,
+                                       float const *A, float const *B,
+                                       float beta, float *C) {
 
+
+
+}
 
 namespace cuda::gemm::v1 {
     void bir_Sgemm(int m, int n, int k, float const *alpha, float const *A,
