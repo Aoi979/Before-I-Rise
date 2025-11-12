@@ -25,9 +25,9 @@ void cpu_sgemm(int M, int N, int K,
 
 
 int main() {
-    constexpr int M = 4096;
-    constexpr int N = 4096;
-    constexpr int K = 4096;
+    constexpr int M =4096;
+    constexpr int N =4096;
+    constexpr int K =4096;
 
     std::vector<float> A(M * K);
     std::vector<float> B(K * N);

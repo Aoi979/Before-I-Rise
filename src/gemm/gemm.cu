@@ -40,7 +40,7 @@ __global__ void sgemm_shared_mem_block(int M, int N, int K, float alpha,
 // computing TM*TN elements pre thread
 // computing BM*BN elements pre block
 // 2048*2048*2048 BM * BN: 128*128  256 threads pre block
-template<int const BM = 128, int const BN = 128, int const TM = 8, int const TN = 8, int const bK = 8>
+template<int const BM = 128, int const BN = 128, int const TM = 8, int const TN = 8, int const bK = 32>
 __global__ void sgemm_shared_mem_2d(int M, int N, int K, float alpha,
                                     float const *A, float const *B,
                                     float beta, float *C) {
@@ -102,7 +102,93 @@ __global__ void sgemm_shared_mem_2d(int M, int N, int K, float alpha,
     for (uint32_t reg_idx_a = 0; reg_idx_a < TM; reg_idx_a++) {
         for (uint32_t reg_idx_b = 0; reg_idx_b < TN; reg_idx_b++) {
             C[(threadIdx.y * TM + reg_idx_a) * N + threadIdx.x * TN + reg_idx_b] =
-                    alpha * result[reg_idx_a * TN + reg_idx_b];
+                    alpha * result[reg_idx_a * TN + reg_idx_b] + beta * C[
+                        (threadIdx.y * TM + reg_idx_a) * N + threadIdx.x * TN + reg_idx_b];
+        }
+    }
+}
+
+template<int const BM = 128, int const BN = 128, int const TM = 4, int const TN = 4, int const WM = 32, int const WN =
+        64, int const bK = 32, int const WM_ITER = 2, int const WN_ITER = 2>
+__global__ void sgemm_smem_warp_tiling(int M, int N, int K, float alpha,
+                                       float const *A, float const *B,
+                                       float beta, float *C) {
+    __shared__ float a_smem[bK * BM];
+    __shared__ float b_smem[bK * BN];
+
+    constexpr uint32_t WARP_SIZE = 32;
+    constexpr uint32_t threads_per_block = ((BM * BN) / (WM * WN)) * WARP_SIZE;
+    uint32_t warp_id = threadIdx.x / WARP_SIZE;
+    uint32_t lane_id = threadIdx.x % WARP_SIZE;
+    A += blockIdx.y * BM * K;
+    B += blockIdx.x * BN;
+    C += blockIdx.y * BM * N + blockIdx.x * BN;
+    float reg_a[2 * TM] = {0.0};
+    float reg_b[2 * TN] = {0.0};
+    float result[4 * TM * TN] = {0.0};
+    constexpr uint32_t load_a_per_thread = (bK * BM) / threads_per_block;
+    constexpr uint32_t load_b_per_thread = (bK * BN) / threads_per_block;
+    constexpr uint32_t warps_per_row = BN / WN;
+    uint32_t warp_row = warp_id / warps_per_row;
+    uint32_t warp_col = warp_id % warps_per_row;
+    constexpr uint32_t inner_N = WN / WN_ITER;
+    constexpr uint32_t inner_M = WM / WM_ITER;
+    uint32_t inner_row = lane_id / (inner_N / TN);
+    uint32_t inner_col = lane_id % (inner_N / TN);
+    uint32_t k_iter = K / bK;
+    for (int k = 0; k < k_iter; ++k) {
+        for (int a = 0; a < load_a_per_thread; ++a) {
+            uint32_t smem_idx = threadIdx.x + a * threads_per_block;
+            uint32_t global_a_idx = (smem_idx % BM) * K + (smem_idx / BM) + k * bK;
+            a_smem[smem_idx] = A[global_a_idx];
+        }
+        for (int b = 0; b < load_b_per_thread; ++b) {
+            uint32_t smem_idx = threadIdx.x + b * threads_per_block;
+            uint32_t global_b_idx = (smem_idx / BN) * N + (smem_idx % BN) + k * bK * N;
+            b_smem[smem_idx] = B[global_b_idx];
+        }
+
+        __syncthreads();
+        for (uint32_t dot_product_idx = 0; dot_product_idx < bK; ++dot_product_idx) {
+            float *inner_A = &a_smem[warp_row * WM];
+            float *inner_B = &b_smem[warp_col * WN];
+
+            for (int a = 0; a < WM_ITER; a++) {
+                for (int i = 0; i < TM; i++) {
+                    reg_a[a * TM + i] = inner_A[inner_row * TM + i + dot_product_idx * BM + a * inner_M];
+                }
+            }
+            for (int b = 0; b < WN_ITER; b++) {
+                for (int i = 0; i < TN; i++) {
+                    reg_b[b * TN + i] = inner_B[inner_col * TN + i + dot_product_idx * BN + b * inner_N];
+                }
+            }
+
+            for (int a = 0; a < WM_ITER; a++) {
+                for (int b = 0; b < WN_ITER; b++) {
+                    for (int reg_idx_a = 0; reg_idx_a < TM; reg_idx_a++) {
+                        for (int reg_idx_b = 0; reg_idx_b < TN; reg_idx_b++) {
+                            result[a * TM * 2 * TN + b * TN + reg_idx_a * 2 * TN + reg_idx_b] += reg_a[
+                                a * TM + reg_idx_a] * reg_b[b * TN + reg_idx_b];
+                        }
+                    }
+                }
+            }
+        }
+        __syncthreads();
+    }
+    float *final_C = &C[warp_row * WM * N + warp_col * WN];
+    for (int a = 0; a < WM_ITER; a++) {
+        for (int b = 0; b < WN_ITER; b++) {
+            for (uint32_t reg_idx_a = 0; reg_idx_a < TM; reg_idx_a++) {
+                for (uint32_t reg_idx_b = 0; reg_idx_b < TN; reg_idx_b++) {
+                    uint32_t row_offset = a * inner_M + inner_row * TM + reg_idx_a;
+                    uint32_t col_offset = b * inner_N + inner_col * TN + reg_idx_b;
+                    final_C[row_offset * N + col_offset] =
+                            alpha * result[a * TM * WN_ITER * TN + b * TN * TM + reg_idx_a * TN + reg_idx_b] + beta *
+                            final_C[row_offset * N + col_offset];
+                }
+            }
         }
     }
 }
@@ -115,8 +201,8 @@ namespace cuda::gemm::v1 {
         constexpr int K = 4096;
         constexpr int BM = 128;
         constexpr int BN = 128;
-        constexpr int TM = 8;
-        constexpr int TN = 8;
+        constexpr int TM = 4;
+        constexpr int TN = 4;
         assert(m == M && n == N && k == K);
         float *d_A, *d_B, *d_C;
         cudaMalloc(&d_A, M * K * sizeof(float));
@@ -127,8 +213,8 @@ namespace cuda::gemm::v1 {
         cudaMemcpy(d_B, B, K * N * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(d_C, C, M * N * sizeof(float), cudaMemcpyHostToDevice);
         dim3 grid(N / BN, M / BM);
-        dim3 block(BN / TN, BM / TM);
-        sgemm_shared_mem_2d
+        dim3 block(((BM * BN) / (64 * 32)) * 32);
+        sgemm_smem_warp_tiling
                 <<<grid, block>>>(M, N, K, *alpha, d_A, d_B, *beta, d_C);
         cudaDeviceSynchronize();
         cudaMemcpy(C, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
