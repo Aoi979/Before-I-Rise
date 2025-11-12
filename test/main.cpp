@@ -25,9 +25,9 @@ void cpu_sgemm(int M, int N, int K,
 
 
 int main() {
-    constexpr int M =4096;
-    constexpr int N =4096;
-    constexpr int K =4096;
+    constexpr int M =2048;
+    constexpr int N =2048;
+    constexpr int K =2048;
 
     std::vector<float> A(M * K);
     std::vector<float> B(K * N);
@@ -72,6 +72,5 @@ int main() {
         std::cout << "✅ 前 10 个元素均匹配，GPU 结果正确。" << std::endl;
     else
         std::cout << "❌ 检测到差异，可能存在计算或同步问题。" << std::endl;
-
     return 0;
 }

@@ -51,3 +51,39 @@ L1难以分析，因为硬件上L1的策略是需要权衡的，而不是L2那�
 ### 总结
 改进后计算是更密集了，但smem访问模式仍然是低效的
 
+## GEMM kernel 3:
+按warp去分块，减少bank conflict， 数据规模为$2048*2048*2048$,因为保留block为$128*128$，这样负载更合理一些
+
+### Throughput
+![alt text](image-9.png)
+没什么好说的了不想说了
+
+#### Roofline Analysis
+![alt text](image-10.png)
+此时AI到了232.67，算力进一步提升
+
+### Compute Workload Analysis
+![alt text](image-11.png)
+因为减少了bank conflict，所以利用率就上去了
+
+### Memory Workload Analysis
+![alt text](image-12.png)
+这是warp分块的主要目的，可见bank conflict大量减少
+
+### Source Counters
+不过ncu也指出，我们存在大量的非合并gmem访问 
+![alt text](image-13.png)
+
+只有大约 22% 的访问是高效的
+
+确实,以下代码完全是没有合并访存
+```cuda
+    for (int a = 0; a < load_a_per_thread; ++a) {
+        uint32_t smem_idx = threadIdx.x + a * threads_per_block;
+        uint32_t global_a_idx = (smem_idx % BM) * K + (smem_idx / BM) + k * bK;
+        a_smem[smem_idx] = A[global_a_idx];
+    }
+```
+
+### 总结
+目前的gmem访问模式有很大问题，我们应该改变访存模式并使用向量化访存指令去优化kernel

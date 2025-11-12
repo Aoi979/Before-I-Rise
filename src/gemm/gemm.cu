@@ -196,9 +196,9 @@ __global__ void sgemm_smem_warp_tiling(int M, int N, int K, float alpha,
 namespace cuda::gemm::v1 {
     void bir_Sgemm(int m, int n, int k, float const *alpha, float const *A,
                    float const *B, float const *beta, float *C) {
-        constexpr int M = 4096;
-        constexpr int N = 4096;
-        constexpr int K = 4096;
+        constexpr int M = 2048;
+        constexpr int N = 2048;
+        constexpr int K = 2048;
         constexpr int BM = 128;
         constexpr int BN = 128;
         constexpr int TM = 4;
