@@ -14,3 +14,20 @@ mkdir build
 cd build
 cmake ..
 ninja
+```
+
+
+## Profiling 与优化记录
+
+重要算子的性能分析与优化过程摘要会存放在docs路径下，相关kernel的ncu报告在ncu路径下
+
+可使用以下命令打开 `.ncu-rep` 报告查看详细性能数据：
+
+```bash
+ncu-ui ncu/xxxx.ncu-rep
+```
+### SGEMM
+- 📘 [优化记录：docs/gemm.md](docs/gemm.md)
+
+
+
