@@ -87,3 +87,35 @@ L1难以分析，因为硬件上L1的策略是需要权衡的，而不是L2那�
 
 ### 总结
 目前的gmem访问模式有很大问题，我们应该改变访存模式并使用向量化访存指令去优化kernel
+
+## GEMM kernel 4:
+仅仅只是在3的基础上使用向量化访存，让gmem访问尽可能合并
+### Throughput
+![alt text](image-14.png)
+可见在访存变得更高效后，访存的吞吐都降低了，并不是吞吐都拉满就是好，主要问题在于计算单元是否依赖存储器上的数据，如果不依赖那么计算和访存都一起不停的跑，那很好，但如果依赖的话计算单元在得到操作数之前会一直无法工作。我们的优化每一步都在降低访存的需求，GEMM是3级算子，运算的增长幅度超过数据规模的扩大，这样的优化方向结果毫无疑问是正确的，但也有点没发挥硬件能力，这应该和形状关系比较大
+
+ncu指出 *This workload exhibits low compute throughput and memory bandwidth utilization relative to the peak performance of this device. Achieved compute throughput and/or memory bandwidth below 60.0% of peak typically indicate latency issues. Look at  Scheduler Statistics and  Warp State Statistics for potential reasons.*
+
+这个情况下隐藏延迟的能力没有被发挥好
+我们可以增大block内线程的数量，用更多的warp去隐藏延迟，但这样对smem和寄存器大小有要求，再来就是做软件流水
+
+#### Roofline Analysis
+![alt text](image-15.png)
+访存更高效，计算单元也就不用停顿太久，算力提升
+
+### Compute Workload Analysis
+![alt text](image-16.png)
+和上面说的一样的，利用率提升是毫无疑问的
+
+### Memory Workload Analysis
+![alt text](image-17.png)
+说实话我也没想明白为什么这里还有bank conflict，因为向量化访存的关系，数字是进一步下降了
+
+
+### Source Counters
+![alt text](image-18.png)
+访问gmem是按block去做的，这里还不能合并只能归咎于block的形状了
+
+### 总结
+更高效了，但也因此访存没有发挥硬件更强大的能力
+
