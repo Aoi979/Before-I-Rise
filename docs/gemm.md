@@ -111,7 +111,8 @@ ncu指出 *This workload exhibits low compute throughput and memory bandwidth ut
 ![alt text](image-17.png)
 说实话我也没想明白为什么这里还有bank conflict，因为向量化访存的关系，数字是进一步下降了
 
-（叠甲，不懂硬件，纯猜）这里猜测是仲裁器不能一次处理 *N个线程发起对同一个bank同一个地址的访问 + 32-N+1个线程访问地址连续位于不同bank* 的情况，猜测依据是kernel1是$32*32$的分块，一个warp完整的广播同一个值（对A矩阵）和完整的32bank读（对B矩阵），测出来是完全没有bank conflict的，在这个kernel，对A应该只会使用16个读端口，且都位于不同bank,但每8个线程访问的都是一样的地址
+答：这里的bank conflict是L1和smem的冲突，是物理硬件上的，从source页可以看出我们的访存无bank conflict
+![alt text](image-19.png)
 
 ### Source Counters
 ![alt text](image-18.png)

@@ -15,5 +15,8 @@ set_target_properties(before_i_rise PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
 )
 
+target_compile_options(before_i_rise PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>
+)
 
 add_subdirectory(test)
