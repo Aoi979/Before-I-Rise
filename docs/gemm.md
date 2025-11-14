@@ -118,6 +118,7 @@ ncu指出 *This workload exhibits low compute throughput and memory bandwidth ut
 ![alt text](image-18.png)
 访问gmem是按block去做的，这里还不能合并只能归咎于block的形状了
 
+[这是我当初的一个疏忽，索引设计的有问题，已修正]
 ### 总结
 更高效了，但也因此访存没有发挥硬件更强大的能力
 
