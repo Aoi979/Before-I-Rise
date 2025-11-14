@@ -227,8 +227,8 @@ __global__ void sgemm_smem_warp_tiling_vec4(int M, int N, int K, float alpha,
     uint32_t k_iter = K / bK;
     for (int k = 0; k < k_iter; ++k) {
         for (int a = 0; a < load_a_per_thread; ++a) {
-            uint32_t smem_idx = (threadIdx.x / BM) * VEC_SIZE * BM + (threadIdx.x % BM) + a * threads_per_block *
-                                VEC_SIZE;
+            uint32_t smem_idx = ((threadIdx.x % (bK / VEC_SIZE)) * VEC_SIZE * BM) + (threadIdx.x / (bK / VEC_SIZE)) + (
+                                    (a * threads_per_block * VEC_SIZE) / bK);
             uint32_t global_a_idx = (smem_idx % BM) * K + (smem_idx / BM) + k * bK;
             ldg_a = FETCH_CONST_FLOAT4(A[global_a_idx]);
             a_smem[smem_idx] = ldg_a.x;
