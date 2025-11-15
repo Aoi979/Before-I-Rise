@@ -27,7 +27,7 @@ ninja
 ncu-ui ncu/xxxx.ncu-rep
 ```
 ### SGEMM
-- 📘 [优化记录：docs/gemm.md](docs/gemm.md)
+- 📘 [优化记录：docs/gemm.md](docs/sgemm.md)
 
 
 
