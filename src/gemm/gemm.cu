@@ -1,5 +1,9 @@
 #include <cassert>
 #include <cstdint>
+#include <cuda_fp16.h>
+#include <mma.h>
+#include <mma.h>
+using namespace nvcuda;
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 #define FETCH_CONST_FLOAT4(pointer) (reinterpret_cast<const float4 *>(&(pointer))[0])
 
@@ -515,6 +519,93 @@ __global__ void sgemm_smem_warp_tiling_vec4_pipeline(int M, int N, int K, float 
                                 ]);
                 }
             }
+        }
+    }
+}
+
+template<int const BM = 128, int const BN = 256, int const bK = 32, int const WM = 64, int const WN = 64>
+__global__ void hgemm_wmma(half *A, half *B, half *C, int M, int N, int K) {
+    uint32_t warp_id = threadIdx.x / 32;
+
+    __shared__ half a_smem[BM * bK];
+    __shared__ half b_smem[BN * bK];
+    constexpr uint32_t FRAGMENT_SIZE = 16;
+    constexpr uint32_t WARP_SIZE = 32;
+
+    constexpr uint32_t bk_iter = bK / FRAGMENT_SIZE;
+    constexpr uint32_t wm_iter = WM / FRAGMENT_SIZE;
+    constexpr uint32_t wn_iter = WN / FRAGMENT_SIZE;
+
+    uint32_t warp_row = warp_id / (BN / WN);
+    uint32_t warp_col = warp_id % (BN / WN);
+
+    // LDG 128, 8 * 16bit
+    constexpr uint32_t VEC_SIZE = 8;
+    constexpr uint32_t threads_per_block = ((BM * BN) / (WM * WN)) * WARP_SIZE;
+    constexpr uint32_t load_a_per_thread = ((BM * bK) / threads_per_block) / VEC_SIZE;
+    constexpr uint32_t load_b_per_thread = ((BN * bK) / threads_per_block) / VEC_SIZE;
+    // 32 * 64
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> frag_a[wm_iter][bk_iter];
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> frag_b[bk_iter][wn_iter];
+    wmma::fragment<wmma::accumulator, 16, 16, 16, half> frag_c[wm_iter][wn_iter];
+
+    A += blockIdx.y * BM * K;
+    B += blockIdx.x * BN;
+    C += blockIdx.y * BM * N + blockIdx.x * BN;
+#pragma unroll
+    for (uint32_t m = 0; m < wm_iter; m++) {
+        for (uint32_t n = 0; n < wn_iter; n++) {
+            wmma::fill_fragment(frag_c[m][n], 0.0f);
+        }
+    }
+
+    uint32_t k_iter = K / bK;
+#pragma unroll
+    for (uint32_t k = 0; k < k_iter; k++) {
+#pragma unroll
+        for (uint32_t a = 0; a < load_a_per_thread; a++) {
+            uint32_t col_offset = threadIdx.x % (bK / VEC_SIZE);
+            uint32_t row_offset = threadIdx.x / (bK / VEC_SIZE);
+            FETCH_FLOAT4(a_smem[row_offset * bK + col_offset * VEC_SIZE + a * threads_per_block * VEC_SIZE]) =
+                    FETCH_FLOAT4(
+                        A[row_offset * K + col_offset * VEC_SIZE + a * ((threads_per_block * VEC_SIZE) / bK) * K]);
+        }
+#pragma unroll
+        for (uint32_t b = 0; b < load_b_per_thread; b++) {
+            uint32_t col_offset = threadIdx.x % (BN / VEC_SIZE);
+            uint32_t row_offset = threadIdx.x / (BN / VEC_SIZE);
+            FETCH_FLOAT4(b_smem[row_offset * BN + col_offset * VEC_SIZE + b * threads_per_block * VEC_SIZE]) =
+                    FETCH_FLOAT4(
+                        B[row_offset * N + col_offset * VEC_SIZE + b * ((threads_per_block * VEC_SIZE) / BN) * N]);
+        }
+        A += bK;
+        B += bK * N;
+        __syncthreads();
+#pragma unroll
+        for (uint32_t bk = 0; bk < bk_iter; bk++) {
+            for (uint32_t m = 0; m < wm_iter; m++) {
+                wmma::load_matrix_sync(frag_a[m][bk], &a_smem[m * FRAGMENT_SIZE * bK + bk * FRAGMENT_SIZE], bK);
+            }
+            for (uint32_t n = 0; n < wn_iter; n++) {
+                wmma::load_matrix_sync(frag_b[bk][n], &b_smem[bk * FRAGMENT_SIZE * BN + n * FRAGMENT_SIZE], BN);
+            }
+        }
+#pragma unroll
+        for (uint32_t m = 0; m < wm_iter; m++) {
+            for (uint32_t n = 0; n < wn_iter; n++) {
+                for (uint32_t k_ = 0; k_ < bk_iter; k_++) {
+                    wmma::mma_sync(frag_c[m][n], frag_a[m][k_], frag_b[k_][n], frag_c[m][n]);
+                }
+            }
+        }
+        __syncthreads();
+    }
+#pragma unroll
+    for (uint32_t m = 0; m < wm_iter; m++) {
+#pragma unroll
+        for (uint32_t n = 0; n < wn_iter; n++) {
+            wmma::store_matrix_sync(&C[warp_row * WM * N + warp_col * WN + m * FRAGMENT_SIZE * N + n * FRAGMENT_SIZE],
+                                    frag_c[m][n], N, wmma::mem_row_major);
         }
     }
 }
