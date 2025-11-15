@@ -584,10 +584,10 @@ __global__ void hgemm_wmma(half *A, half *B, half *C, int M, int N, int K) {
 #pragma unroll
         for (uint32_t bk = 0; bk < bk_iter; bk++) {
             for (uint32_t m = 0; m < wm_iter; m++) {
-                wmma::load_matrix_sync(frag_a[m][bk], &a_smem[m * FRAGMENT_SIZE * bK + bk * FRAGMENT_SIZE], bK);
+                wmma::load_matrix_sync(frag_a[m][bk], &a_smem[warp_row * WM * bK + m * FRAGMENT_SIZE * bK + bk * FRAGMENT_SIZE], bK);
             }
             for (uint32_t n = 0; n < wn_iter; n++) {
-                wmma::load_matrix_sync(frag_b[bk][n], &b_smem[bk * FRAGMENT_SIZE * BN + n * FRAGMENT_SIZE], BN);
+                wmma::load_matrix_sync(frag_b[bk][n], &b_smem[warp_col * WN + bk * FRAGMENT_SIZE * BN + n * FRAGMENT_SIZE], BN);
             }
         }
 #pragma unroll
