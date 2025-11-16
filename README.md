@@ -28,6 +28,7 @@ ncu-ui ncu/xxxx.ncu-rep
 ```
 ### SGEMM
 - 📘 [优化记录：docs/sgemm.md](docs/sgemm.md)
-
+### HGEMM
+- 📘 [优化记录 :docs/hgemm.md](docs/hgemm.md)
 
 

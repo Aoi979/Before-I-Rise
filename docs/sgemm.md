@@ -1,6 +1,6 @@
 # SGEMM Profiling记录
 
-## SGEMM kernel 1:
+## SGEMM kernel 1: 
 仅仅使用shared memory做分块矩阵乘
 数据规模为$1024*1024*1024$,一个块处理$32*32$个元素
 ### Throughput
