@@ -13,6 +13,6 @@ namespace cuda::gemm {
                        float const *B, float const *beta, float *C);
 
         void bir_Hgemm(int m, int n, int k, half const *alpha, half const *A,
-                       half const *B, half const *beta, half *C);
+                       half const *B, half const *beta, float *C);
     }
 }
