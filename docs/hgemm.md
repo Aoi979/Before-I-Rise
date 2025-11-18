@@ -53,5 +53,6 @@ Ampere开始支持的新的数据通路，允许gmem->smem,而不经过寄存器
 ![alt text](res/image-29.png)
 hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令，但又没几个warp可调度,没啥办法隐藏这个延迟了，做软件流水本身就是让指令不停发射(无依赖)，跑满全部单元，这里因为计算单元而stall实在是束手无策了
 
+后来我想了下，一个SM划4个分区，每个分区一个tc,同一时刻整个sm只有4个warp能用tc,没有必要开一堆warp去等tc空闲，这样避免了无意义的stall,起码让一个sm能多容纳一些block吧，目前的情况是一个sm只能接受一个block,smem用太多了，而内部还有大量stall,另外的想法就是加深流水线了,先从tc出来的warp别干等着了，继续LDG，hgemm比我想的困难的多
 ## HGEMM kernel 5:
 放弃wmma API,使用mma PTX解决bank conflict
