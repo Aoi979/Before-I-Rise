@@ -5,16 +5,15 @@
 using namespace nvcuda;
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 #define FETCH_CONST_FLOAT4(pointer) (reinterpret_cast<const float4 *>(&(pointer))[0])
+
 // CUDA Core
-namespace portable{
-    
+namespace portable {
 }
 
 // Tensor Core
 namespace volta {
     // memcpy_async
     namespace ampere {
-
     }
 }
 
@@ -675,9 +674,10 @@ __global__ void hgemm_wmma_async_memcpy(half *A, half *B, float *C, int M, int N
             asm (
                 "cp.async.ca.shared.global [%0], [%1], 16;\n"
                 :
-                : "r"((int)(a_smem_addr + (int)(row_offset * bK + col_offset * VEC_SIZE + a * threads_per_block * VEC_SIZE) *
-                      sizeof(half) )), "l"(&A[row_offset * K + col_offset * VEC_SIZE + a * (
-                                                 (threads_per_block * VEC_SIZE) / bK) * K])
+                : "r"((int) (a_smem_addr + (int) (
+                                 row_offset * bK + col_offset * VEC_SIZE + a * threads_per_block * VEC_SIZE) *
+                             sizeof(half))), "l"(&A[row_offset * K + col_offset * VEC_SIZE + a * (
+                                                        (threads_per_block * VEC_SIZE) / bK) * K])
             );
         }
         for (uint32_t b = 0; b < load_b_per_thread; b++) {
@@ -686,9 +686,10 @@ __global__ void hgemm_wmma_async_memcpy(half *A, half *B, float *C, int M, int N
             asm (
                 "cp.async.ca.shared.global [%0], [%1], 16;\n"
                 :
-                : "r"((int)(b_smem_addr + (int)(row_offset * BN + col_offset * VEC_SIZE + b * threads_per_block * VEC_SIZE) *
-                      sizeof(half))), "l"(&B[row_offset * N + col_offset * VEC_SIZE + b * (
-                                                 (threads_per_block * VEC_SIZE) / BN) * N])
+                : "r"((int) (b_smem_addr + (int) (
+                                 row_offset * BN + col_offset * VEC_SIZE + b * threads_per_block * VEC_SIZE) *
+                             sizeof(half))), "l"(&B[row_offset * N + col_offset * VEC_SIZE + b * (
+                                                        (threads_per_block * VEC_SIZE) / BN) * N])
             );
         }
         A += bK;
@@ -788,7 +789,8 @@ __global__ void hgemm_wmma_async_memcpy_padding(half *A, half *B, float *C, int 
                 "cp.async.ca.shared.global [%0], [%1], 16;\n"
                 :
                 : "r"((int) (a_smem_addr + (int) (
-                                 row_offset * bK_T + col_offset * VEC_SIZE + a * ((threads_per_block * VEC_SIZE) / bK) * bK_T) *
+                                 row_offset * bK_T + col_offset * VEC_SIZE + a * ((threads_per_block * VEC_SIZE) / bK) *
+                                 bK_T) *
                              sizeof(half))), "l"(&A[row_offset * K + col_offset * VEC_SIZE + a * (
                                                         (threads_per_block * VEC_SIZE) / bK) * K])
             );
@@ -800,7 +802,8 @@ __global__ void hgemm_wmma_async_memcpy_padding(half *A, half *B, float *C, int 
                 "cp.async.ca.shared.global [%0], [%1], 16;\n"
                 :
                 : "r"((int) (b_smem_addr + (int) (
-                                 row_offset * BN_T + col_offset * VEC_SIZE + b * ((threads_per_block * VEC_SIZE) / BN) * BN_T) *
+                                 row_offset * BN_T + col_offset * VEC_SIZE + b * ((threads_per_block * VEC_SIZE) / BN) *
+                                 BN_T) *
                              sizeof(half))), "l"(&B[row_offset * N + col_offset * VEC_SIZE + b * (
                                                         (threads_per_block * VEC_SIZE) / BN) * N])
             );
@@ -822,7 +825,8 @@ __global__ void hgemm_wmma_async_memcpy_padding(half *A, half *B, float *C, int 
         for (uint32_t bk = 0; bk < bk_iter; bk++) {
             for (uint32_t m = 0; m < wm_iter; m++) {
                 wmma::load_matrix_sync(frag_a[m][bk],
-                                       &a_smem[warp_row * WM * bK_T + m * FRAGMENT_SIZE * bK_T + bk * FRAGMENT_SIZE], bK_T);
+                                       &a_smem[warp_row * WM * bK_T + m * FRAGMENT_SIZE * bK_T + bk * FRAGMENT_SIZE],
+                                       bK_T);
             }
             for (uint32_t n = 0; n < wn_iter; n++) {
                 wmma::load_matrix_sync(frag_b[bk][n],
@@ -850,14 +854,20 @@ __global__ void hgemm_wmma_async_memcpy_padding(half *A, half *B, float *C, int 
 }
 
 // ampere_hgemm_128x256
+// cudaFuncSetAttribute(this, cudaFuncAttributeMaxDynamicSharedMemorySize, 54272);
 template<int const BM = 128, int const BN = 256, int const bK = 32, int const WM = 64, int const WN = 64>
 __global__ void hgemm_wmma_async_memcpy_padding_pipeline(half *A, half *B, float *C, int M, int N, int K) {
     uint32_t warp_id = threadIdx.x / 32;
 
-    constexpr uint32_t A_PADDING = 0;
-    constexpr uint32_t B_PADDING = 0;
-    __shared__ half a_smem[2][BM * (bK + A_PADDING)];
-    __shared__ half b_smem[2][(BN + B_PADDING) * bK];
+    constexpr uint32_t A_PADDING = 8;
+    constexpr uint32_t B_PADDING = 8;
+    extern __shared__ half smem[];
+    using array2d_a = half(*)[BM * (bK + A_PADDING)];
+    using array2d_b = half(*)[(BN + B_PADDING) * bK];
+    auto a_smem = reinterpret_cast<array2d_a>(smem);
+    auto b_smem = reinterpret_cast<array2d_b>(smem + 2 * (BM * (bK + A_PADDING)));
+    // __shared__ half a_smem[2][BM * (bK + A_PADDING)];
+    // __shared__ half b_smem[2][(BN + B_PADDING) * bK];
     constexpr uint32_t bK_T = bK + A_PADDING;
     constexpr uint32_t BN_T = BN + B_PADDING;
     constexpr uint32_t FRAGMENT_SIZE = 16;
@@ -885,6 +895,7 @@ __global__ void hgemm_wmma_async_memcpy_padding_pipeline(half *A, half *B, float
     C += blockIdx.y * BM * N + blockIdx.x * BN;
 #pragma unroll
     for (uint32_t m = 0; m < wm_iter; m++) {
+#pragma unroll
         for (uint32_t n = 0; n < wn_iter; n++) {
             wmma::fill_fragment(frag_c[m][n], 0.0f);
         }
@@ -942,7 +953,6 @@ __global__ void hgemm_wmma_async_memcpy_padding_pipeline(half *A, half *B, float
 
 #pragma unroll
     for (uint32_t k = 1; k < k_iter; k++) {
-
         int a_smem_addr = __cvta_generic_to_shared(&a_smem[write_stage_idx][0]);
         int b_smem_addr = __cvta_generic_to_shared(&b_smem[write_stage_idx][0]);
 
@@ -976,31 +986,31 @@ __global__ void hgemm_wmma_async_memcpy_padding_pipeline(half *A, half *B, float
         }
         A += bK;
         B += bK * N;
-        uint32_t load_stage_idx = write_stage_idx^1;
+        uint32_t load_stage_idx = write_stage_idx ^ 1;
 #pragma unroll
         for (uint32_t bk = 0; bk < bk_iter; bk++) {
 #pragma unroll
             for (uint32_t m = 0; m < wm_iter; m++) {
                 wmma::load_matrix_sync(frag_a[m][bk],
-                                       &a_smem[load_stage_idx][warp_row * WM * bK_T + m * FRAGMENT_SIZE * bK_T + bk * FRAGMENT_SIZE],
+                                       &a_smem[load_stage_idx][
+                                           warp_row * WM * bK_T + m * FRAGMENT_SIZE * bK_T + bk * FRAGMENT_SIZE],
                                        bK_T);
             }
 #pragma unroll
             for (uint32_t n = 0; n < wn_iter; n++) {
                 wmma::load_matrix_sync(frag_b[bk][n],
-                                       &b_smem[load_stage_idx][warp_col * WN + bk * FRAGMENT_SIZE * BN_T + n * FRAGMENT_SIZE], BN_T);
+                                       &b_smem[load_stage_idx][
+                                           warp_col * WN + bk * FRAGMENT_SIZE * BN_T + n * FRAGMENT_SIZE], BN_T);
             }
-        }
 #pragma unroll
-        for (uint32_t m = 0; m < wm_iter; m++) {
+            for (uint32_t m = 0; m < wm_iter; m++) {
 #pragma unroll
-            for (uint32_t n = 0; n < wn_iter; n++) {
-#pragma unroll
-                for (uint32_t k_ = 0; k_ < bk_iter; k_++) {
-                    wmma::mma_sync(frag_c[m][n], frag_a[m][k_], frag_b[k_][n], frag_c[m][n]);
+                for (uint32_t n = 0; n < wn_iter; n++) {
+                    wmma::mma_sync(frag_c[m][n], frag_a[m][bk], frag_b[bk][n], frag_c[m][n]);
                 }
             }
         }
+
         write_stage_idx ^= 1;
         asm(
             "cp.async.commit_group;\n"
@@ -1029,14 +1039,11 @@ __global__ void hgemm_wmma_async_memcpy_padding_pipeline(half *A, half *B, float
             wmma::load_matrix_sync(frag_b[bk][n],
                                    &b_smem[1][warp_col * WN + bk * FRAGMENT_SIZE * BN_T + n * FRAGMENT_SIZE], BN_T);
         }
-    }
 #pragma unroll
-    for (uint32_t m = 0; m < wm_iter; m++) {
+        for (uint32_t m = 0; m < wm_iter; m++) {
 #pragma unroll
-        for (uint32_t n = 0; n < wn_iter; n++) {
-#pragma unroll
-            for (uint32_t k_ = 0; k_ < bk_iter; k_++) {
-                wmma::mma_sync(frag_c[m][n], frag_a[m][k_], frag_b[k_][n], frag_c[m][n]);
+            for (uint32_t n = 0; n < wn_iter; n++) {
+                wmma::mma_sync(frag_c[m][n], frag_a[m][bk], frag_b[bk][n], frag_c[m][n]);
             }
         }
     }

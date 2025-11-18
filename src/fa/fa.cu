@@ -1,3 +1,3 @@
-//
-// Created by aoi211 on 11/16/25.
-//
+__global__ void flash_attention_v1() {
+
+}

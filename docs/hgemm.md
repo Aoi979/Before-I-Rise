@@ -46,3 +46,12 @@ Ampere开始支持的新的数据通路，允许gmem->smem,而不经过寄存器
 
 其实优化思路完全能从SGEMM迁移，都不用看了，异步拷贝这里实际上就是同步去做的，肯定会报Warp Stall，接下来就是做排软件流水也就是双缓冲，SGEMM真是最好的老师
 
+## HGEMM kernel 4:
+加上双缓冲了，此时smem大小超48k,不能够静态分配，改为动态分配，使用padding
+![alt text](res/image-28.png)
+看着利用率不高，但实际上这个kernel的大部分warp会因tc而stall，而因为使用tc会在线程数量不多的情况下要求大量寄存器没办法多开warp了，这个延迟难以隐藏
+![alt text](res/image-29.png)
+hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令，但又没几个warp可调度,没啥办法隐藏这个延迟了，做软件流水本身就是让指令不停发射(无依赖)，跑满全部单元，这里因为计算单元而stall实在是束手无策了
+
+## HGEMM kernel 5:
+放弃wmma API,使用mma PTX解决bank conflict
