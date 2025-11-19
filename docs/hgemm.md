@@ -57,6 +57,10 @@ hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令�
 
 ## HGEMM kernel 5:
 我参考的开源实现的代码都开了很多warp,造成了严重的warp stall,导致延迟被暴露，这肯定是不对的！cublas的实现就完全没有这种问题，基于上一节的思考，目前的kernel减少了warp数，并旨在加深流水， 我没有使用cuda api去测kernel的性能而是使用ncu直接看具体数据， 我怀疑有人的测量不准确， 只看kernel的话，他们的实现远不及cublas！
+![alt text](res/image-30.png)
+这是我的kernel和网上某教程的kernel的对比，我的改进是正确的
+![alt text](res/image-31.png)
+
 
 ## HGEMM kernel 6
 放弃wmma API,使用mma PTX解决bank conflict
