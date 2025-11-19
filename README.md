@@ -21,6 +21,8 @@ ninja
 
 重要算子的性能分析与优化过程摘要会存放在docs路径下，相关kernel的ncu报告在ncu路径下
 
+硬件平台为RTX 4060 Laptop, 算子会根据ncu报告做出调整并与cuBLAS对比，不保证在其他机器下高效
+
 可使用以下命令打开 `.ncu-rep` 报告查看详细性能数据：
 
 ```bash
