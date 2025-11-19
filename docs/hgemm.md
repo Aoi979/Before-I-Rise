@@ -54,5 +54,9 @@ Ampere开始支持的新的数据通路，允许gmem->smem,而不经过寄存器
 hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令，但又没几个warp可调度,没啥办法隐藏这个延迟了，做软件流水本身就是让指令不停发射(无依赖)，跑满全部单元，这里因为计算单元而stall实在是束手无策了
 
 后来我想了下，一个SM划4个分区，每个分区一个tc,同一时刻整个sm只有4个warp能用tc,没有必要开一堆warp去等tc空闲，这样避免了无意义的stall,起码让一个sm能多容纳一些block吧，目前的情况是一个sm只能接受一个block,smem用太多了，而内部还有大量stall,另外的想法就是加深流水线了,先从tc出来的warp别干等着了，继续LDG，hgemm比我想的困难的多
+
 ## HGEMM kernel 5:
+我参考的开源实现的代码都开了很多warp,造成了严重的warp stall,导致延迟被暴露，这肯定是不对的！cublas的实现就完全没有这种问题，基于上一节的思考，目前的kernel减少了warp数，并旨在加深流水， 我没有使用cuda api去测kernel的性能而是使用ncu直接看具体数据， 我怀疑有人的测量不准确， 只看kernel的话，他们的实现远不及cublas！
+
+## HGEMM kernel 6
 放弃wmma API,使用mma PTX解决bank conflict
