@@ -8,13 +8,14 @@ __global__ void flash_attention_v1() {
 //  x1
 //  x2
 //  x3
-// Bc == Br
-__global__ void forward(const float *Q, const float *K, const float *V, const int N, const int target_seq_len,
+__global__ void v1_fwd_kernel(const float *Q, const float *K, const float *V, const int target_seq_len,
                         const int src_seq_len, const int d,
                         const int Tc, const int Tr, const int Bc, const int Br, const float softmax_scale,
                         float *l, float *m, float *O) {
-    uint32_t qkv_offset = (blockIdx.x * gridDim.y * N * d) + (blockIdx.y * N * d);
-    uint32_t lm_offset = (blockIdx.x * gridDim.y * N) + (blockIdx.y * N);
+    uint32_t kv_offset = (blockIdx.x * gridDim.y * src_seq_len * d) + (blockIdx.y * src_seq_len * d);
+    uint32_t q_offset = (blockIdx.x * gridDim.y * target_seq_len * d) + (blockIdx.y * target_seq_len * d);
+
+    uint32_t lm_offset = (blockIdx.x * gridDim.y * target_seq_len) + (blockIdx.y * target_seq_len);
 
     extern __shared__ float smem[];
 
@@ -26,14 +27,14 @@ __global__ void forward(const float *Q, const float *K, const float *V, const in
 
     for (uint32_t j = 0; j < Tc; j++) {
         for (uint32_t x = 0; x < d; x++) {
-            Kj[threadIdx.x * d + x] = K[qkv_offset + (tile_size * j) + (threadIdx.x * d) + x];
-            Vj[threadIdx.x * d + x] = V[qkv_offset + (tile_size * j) + (threadIdx.x * d) + x];
+            Kj[threadIdx.x * d + x] = K[kv_offset + (tile_size * j) + (threadIdx.x * d) + x];
+            Vj[threadIdx.x * d + x] = V[kv_offset + (tile_size * j) + (threadIdx.x * d) + x];
         }
         __syncthreads();
         for (uint32_t i = 0; i < Tr; i++) {
             if (threadIdx.x < Br) {
                 for (uint32_t x = 0; x < d; x++) {
-                    Qi[threadIdx.x * d + x] = Q[qkv_offset + (tile_size * i) + (threadIdx.x * d) + x];
+                    Qi[threadIdx.x * d + x] = Q[q_offset + (tile_size * i) + (threadIdx.x * d) + x];
                 }
                 float row_m_prev = m[lm_offset + (Br * i) + threadIdx.x];
                 float row_l_prev = l[lm_offset + (Br * i) + threadIdx.x];
@@ -67,10 +68,10 @@ __global__ void forward(const float *Q, const float *K, const float *V, const in
                     for (int y = 0; y < Bc; y++) {
                         pv += S[(Bc * threadIdx.x) + y] * Vj[(y * d) + x];
                     }
-                    O[qkv_offset + (tile_size * i) + (threadIdx.x * d) + x] = (1 / row_l_new)
+                    O[q_offset + (tile_size * i) + (threadIdx.x * d) + x] = (1 / row_l_new)
                                                                               * ((row_l_prev * __expf(
                                                                                       row_m_prev - row_m_new) * O[
-                                                                                      qkv_offset + (tile_size * i) +
+                                                                                      q_offset + (tile_size * i) +
                                                                                       (
                                                                                           threadIdx.x * d) + x])
                                                                                   + (__expf(row_m - row_m_new) * pv));
@@ -81,4 +82,7 @@ __global__ void forward(const float *Q, const float *K, const float *V, const in
         }
         __syncthreads();
     }
+}
+__global__ void v2_fwd_kernel() {
+
 }
