@@ -8,7 +8,7 @@ __global__ void flash_attention_v1() {
 //  x1
 //  x2
 //  x3
-__global__ void v1_fwd_kernel(const float *Q, const float *K, const float *V, const int target_seq_len,
+__global__ void v1_fwd_kernel_naive(const float *Q, const float *K, const float *V, const int target_seq_len,
                         const int src_seq_len, const int d,
                         const int Tc, const int Tr, const int Bc, const int Br, const float softmax_scale,
                         float *l, float *m, float *O) {

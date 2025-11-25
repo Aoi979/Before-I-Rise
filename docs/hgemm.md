@@ -49,18 +49,17 @@ Ampere开始支持的新的数据通路，允许gmem->smem,而不经过寄存器
 ## HGEMM kernel 4:
 加上双缓冲了，此时smem大小超48k,不能够静态分配，改为动态分配，使用padding
 ![alt text](res/image-28.png)
-看着利用率不高，但实际上这个kernel的大部分warp会因tc而stall，而因为使用tc会在线程数量不多的情况下要求大量寄存器没办法多开warp了，这个延迟难以隐藏
+看着利用率不高，但实际上这个kernel的大部分warp会因tc而stall，而因为使用tc会在线程数量不多的情况下要求大量寄存器没办法多开warp了
 ![alt text](res/image-29.png)
-hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令，但又没几个warp可调度,没啥办法隐藏这个延迟了，做软件流水本身就是让指令不停发射(无依赖)，跑满全部单元，这里因为计算单元而stall实在是束手无策了
+hmma会直接导致warp stall,无法发射这个warp的后续任何无关指令
 
-后来我想了下，一个SM划4个分区，每个分区一个tc,同一时刻整个sm只有4个warp能用tc,没有必要开一堆warp去等tc空闲，这样避免了无意义的stall,起码让一个sm能多容纳一些block吧，目前的情况是一个sm只能接受一个block,smem用太多了，而内部还有大量stall,另外的想法就是加深流水了,先从tc出来的warp别干等着了，继续LDG，hgemm比我想的困难的多
 
 ## HGEMM kernel 5* :
-我参考的开源实现的代码都开了很多warp,造成了严重的warp stall,导致延迟被暴露，这肯定是不对的！cublas的实现就完全没有这种问题，基于上一节的思考，目前的kernel减少了warp数，并旨在加深流水， 我没有使用cuda api去测kernel的性能而是使用ncu直接看具体数据， 我怀疑是硬件平台差异造成的， 但我只有只含24个sm的4060可用，只看kernel的话，他们的实现远不及cublas，所以需要具体问题具体分析，写出当前机器上最合适的kernel,反正技巧就那几个，分析问题的能力更重要
+我参考的开源实现的代码都开了很多warp,造成了严重的warp stall,导致延迟被暴露，这肯定是不对的！cublas的实现就完全没有这种问题，基于上一节的思考，目前的kernel减少了warp数，但一个SM仍然有8个warp可调度,主要是syncthreads()的成本变小，增强了隐藏延迟的能力, 我没有使用cuda api去测kernel的性能而是使用ncu直接看具体数据， 我怀疑是硬件平台差异造成的
 ![alt text](res/image-30.png)
 这是我的kernel和网上某教程的kernel的对比，我的改进是符合当前设备的
 ![alt text](res/image-31.png)
-目前的情况是warp减少，读gmem写smem会造成一点stall, 但是tc的负载又不能继续增加，只好从最后的写回下手了，这种情况下我预估再加一个stage不会有什么效果，tc本身就不够用的情况下，这样会对smem的需求进一步增加自然导致一个sm塞不进几个block，那么延迟就无法被隐藏，没辙了
+目前的情况是warp减少，读gmem写smem会造成一点stall，4060的带宽也就这样了, 还有一个优化方向那就是结果写smem然后合并写gmem
 
 实际上当前的性能和cublas比也没很难看
 ![alt text](res/image-32.png)
