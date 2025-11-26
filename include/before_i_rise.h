@@ -1,5 +1,6 @@
 #pragma once
-#include "../../../../opt/cuda/targets/x86_64-linux/include/cuda_fp16.h"
+#include <cuda_fp16.h>
+#include <vector>
 
 namespace cuda::gemm {
     namespace final {
