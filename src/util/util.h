@@ -1,6 +1,6 @@
 #pragma once
 
-#define WARP_SIZE 32
+
 #define INT4(value) (reinterpret_cast<int4 *>(&(value))[0])
 #define FLOAT2(value) (reinterpret_cast<float2 *>(&(value))[0])
 #define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
@@ -74,3 +74,21 @@ asm volatile(                                                                \
 : "=r"(RD0), "=r"(RD1), "=r"(RD2), "=r"(RD3)                             \
 : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0),  \
 "r"(RC1), "r"(RC2), "r"(RC3))
+
+template <typename T, const int kWarpSize = 32>
+__device__ inline T warp_reduce_sum(T val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask, kWarpSize);
+  }
+  return val;
+}
+
+template <typename T, const int kWarpSize = 32>
+__device__ inline T warp_reduce_max(T val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val = max(val, __shfl_xor_sync(0xffffffff, val, mask, kWarpSize));
+  }
+  return val;
+}

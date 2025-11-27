@@ -17,8 +17,6 @@ namespace volta {
     }
 }
 
-namespace bir_volta = volta;
-namespace bir_ampere = volta::ampere;
 
 template<int const BLOCKSIZE>
 __global__ void sgemm_shared_mem_block(int M, int N, int K, float alpha,
