@@ -1,6 +1,5 @@
 #pragma once
 
-
 #define INT4(value) (reinterpret_cast<int4 *>(&(value))[0])
 #define FLOAT2(value) (reinterpret_cast<float2 *>(&(value))[0])
 #define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
@@ -14,66 +13,66 @@
 #define CP_ASYNC_WAIT_ALL() asm volatile("cp.async.wait_all;\n" ::)
 
 #define CP_ASYNC_WAIT_GROUP(n)                                                 \
-asm volatile("cp.async.wait_group %0;\n" ::"n"(n))
+  asm volatile("cp.async.wait_group %0;\n" ::"n"(n))
 
 // ca(cache all, L1 + L2): support 4, 8, 16 bytes, cg(cache global, L2): only
 // support 16 bytes.
 #define CP_ASYNC_CA(dst, src, bytes)                                           \
-asm volatile(                                                                \
-"cp.async.ca.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(dst),       \
-"l"(src), "n"(bytes))
+  asm volatile(                                                                \
+      "cp.async.ca.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(dst),       \
+      "l"(src), "n"(bytes))
 
 #define CP_ASYNC_CG(dst, src, bytes)                                           \
-asm volatile(                                                                \
-"cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(dst),       \
-"l"(src), "n"(bytes))
+  asm volatile(                                                                \
+      "cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(dst),       \
+      "l"(src), "n"(bytes))
 
 // ldmatrix
 #define LDMATRIX_X1(R, addr)                                                   \
-asm volatile("ldmatrix.sync.aligned.x1.m8n8.shared.b16 {%0}, [%1];\n"        \
-: "=r"(R)                                                       \
-: "r"(addr))
+  asm volatile("ldmatrix.sync.aligned.x1.m8n8.shared.b16 {%0}, [%1];\n"        \
+               : "=r"(R)                                                       \
+               : "r"(addr))
 #define LDMATRIX_X2(R0, R1, addr)                                              \
-asm volatile("ldmatrix.sync.aligned.x2.m8n8.shared.b16 {%0, %1}, [%2];\n"    \
-: "=r"(R0), "=r"(R1)                                            \
-: "r"(addr))
+  asm volatile("ldmatrix.sync.aligned.x2.m8n8.shared.b16 {%0, %1}, [%2];\n"    \
+               : "=r"(R0), "=r"(R1)                                            \
+               : "r"(addr))
 #define LDMATRIX_X4(R0, R1, R2, R3, addr)                                      \
-asm volatile(                                                                \
-"ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"     \
-: "=r"(R0), "=r"(R1), "=r"(R2), "=r"(R3)                                 \
-: "r"(addr))
+  asm volatile(                                                                \
+      "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n"     \
+      : "=r"(R0), "=r"(R1), "=r"(R2), "=r"(R3)                                 \
+      : "r"(addr))
 #define LDMATRIX_X1_T(R, addr)                                                 \
-asm volatile("ldmatrix.sync.aligned.x1.trans.m8n8.shared.b16 {%0}, [%1];\n"  \
-: "=r"(R)                                                       \
-: "r"(addr))
+  asm volatile("ldmatrix.sync.aligned.x1.trans.m8n8.shared.b16 {%0}, [%1];\n"  \
+               : "=r"(R)                                                       \
+               : "r"(addr))
 #define LDMATRIX_X2_T(R0, R1, addr)                                            \
-asm volatile(                                                                \
-"ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"       \
-: "=r"(R0), "=r"(R1)                                                     \
-: "r"(addr))
+  asm volatile(                                                                \
+      "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"       \
+      : "=r"(R0), "=r"(R1)                                                     \
+      : "r"(addr))
 #define LDMATRIX_X4_T(R0, R1, R2, R3, addr)                                    \
-asm volatile(                                                                \
-"ldmatrix.sync.aligned.x4.trans.m8n8.shared.b16 {%0, %1, %2, %3}, "      \
-"[%4];\n"                                                                \
-: "=r"(R0), "=r"(R1), "=r"(R2), "=r"(R3)                                 \
-: "r"(addr))
+  asm volatile(                                                                \
+      "ldmatrix.sync.aligned.x4.trans.m8n8.shared.b16 {%0, %1, %2, %3}, "      \
+      "[%4];\n"                                                                \
+      : "=r"(R0), "=r"(R1), "=r"(R2), "=r"(R3)                                 \
+      : "r"(addr))
 
 // mma m16n8k16
 #define HMMA16816(RD0, RD1, RA0, RA1, RA2, RA3, RB0, RB1, RC0, RC1)            \
-asm volatile(                                                                \
-"mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, "  \
-"%4, %5}, {%6, %7}, {%8, %9};\n"                                         \
-: "=r"(RD0), "=r"(RD1)                                                   \
-: "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0),  \
-"r"(RC1))
+  asm volatile(                                                                \
+      "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, "  \
+      "%4, %5}, {%6, %7}, {%8, %9};\n"                                         \
+      : "=r"(RD0), "=r"(RD1)                                                   \
+      : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0),  \
+        "r"(RC1))
 #define HMMA16816F32(RD0, RD1, RD2, RD3, RA0, RA1, RA2, RA3, RB0, RB1, RC0,    \
-    RC1, RC2, RC3)                                            \
-asm volatile(                                                                \
-"mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,  %1,  %2,  "     \
-"%3}, {%4, %5, %6, %7}, {%8, %9}, {%10, %11, %12, %13};\n"               \
-: "=r"(RD0), "=r"(RD1), "=r"(RD2), "=r"(RD3)                             \
-: "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0),  \
-"r"(RC1), "r"(RC2), "r"(RC3))
+                     RC1, RC2, RC3)                                            \
+  asm volatile(                                                                \
+      "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,  %1,  %2,  "     \
+      "%3}, {%4, %5, %6, %7}, {%8, %9}, {%10, %11, %12, %13};\n"               \
+      : "=r"(RD0), "=r"(RD1), "=r"(RD2), "=r"(RD3)                             \
+      : "r"(RA0), "r"(RA1), "r"(RA2), "r"(RA3), "r"(RB0), "r"(RB1), "r"(RC0),  \
+        "r"(RC1), "r"(RC2), "r"(RC3))
 
 template <typename T, const int kWarpSize = 32>
 __device__ inline T warp_reduce_sum(T val) {
@@ -91,4 +90,47 @@ __device__ inline T warp_reduce_max(T val) {
     val = max(val, __shfl_xor_sync(0xffffffff, val, mask, kWarpSize));
   }
   return val;
+}
+
+template <typename T, int M, const int N, const int K = 2>
+__device__ inline void fill_3D_regs(T (&R)[M][N][K], T val) {
+#pragma unroll
+  for (int i = 0; i < M; ++i) {
+#pragma unroll
+    for (int j = 0; j < N; ++j) {
+#pragma unroll
+      for (int k = 0; k < K; ++k) {
+        R[i][j][k] = val;
+      }
+    }
+  }
+}
+
+template <typename T, int M, const int N = 2>
+__device__ inline void fill_2D_regs(T (&R)[M][N], T val) {
+#pragma unroll
+  for (int i = 0; i < M; ++i) {
+#pragma unroll
+    for (int j = 0; j < N; ++j) {
+      R[i][j] = val;
+    }
+  }
+}
+
+template <typename T, int M>
+__device__ inline void fill_1D_regs(T (&S)[M], T val) {
+#pragma unroll
+  for (int i = 0; i < M; ++i) {
+    S[i] = val;
+  }
+}
+
+template <typename T, int M>
+__device__ inline void fill_1D_smem(T (&R)[M], T val, int tid) {
+  if (tid == 0) {
+#pragma unroll
+    for (int i = 0; i < M; ++i) {
+      R[i] = val;
+    }
+  }
 }

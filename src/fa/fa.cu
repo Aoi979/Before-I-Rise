@@ -264,12 +264,12 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     __syncthreads();
   }
 
-  for (int tile_K_seqlen; tile_K_seqlen < Tc; tile_K_seqlen++) {
+  for (int tile_K_seqlen = 0; tile_K_seqlen < Tc; tile_K_seqlen++) {
     uint32_t K_smem_select = (tile_K_seqlen % STAGE);
     uint32_t K_smem_select_next = (tile_K_seqlen + (STAGE - 1)) % STAGE;
 
     if constexpr (STAGE > 1) {
-      // load V
+      // load V asynchronously
       {
         for (int i = 0; i < Bc / load_smem_KV_stride; i++) {
 
@@ -288,7 +288,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
         CP_ASYNC_COMMIT_GROUP();
       }
 
-      // NOTE: load next stage (only STGAE == 2)
+      // NOTE: load next stage (only STGAE == 2) asynchronously
       if ((tile_K_seqlen + 1) < Tc) {
         for (int i = 0; i < load_smem_KV_stride; i++) {
 
@@ -308,27 +308,30 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       }
     } else {
       // stage == 1
+      // ..........
+      // ..........
     }
 
-    // Q | smem 2 register
+    fill_3D_regs<uint32_t, WARP_ITER_SEQLEN_QS, WARP_ITER_SEQLEN_K, 2>(R_S, 0);
     for (int bk_d = 0; bk_d < hidden_K_ITER; bk_d++) {
+      // Q | smem2register
       for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
         uint32_t Q_smem_warp_offset =
             (warp_seqlen_qs_id * MMA_M * WARP_NUM_SEQLEN_QS) + i * MMA_M;
-        uint32_t lane_Q_smem_Br = Q_smem_warp_offset + lane_id % 16;
-        uint32_t lane_Q_smem_d = bk_d * MMA_K + (lane_id / 16) * 8;
+        uint32_t lane_Q_smem_Br = Q_smem_warp_offset + lane_id % MMA_M;
+        uint32_t lane_Q_smem_d = bk_d * MMA_K + (lane_id / MMA_M) * 8;
         uint32_t lane_Q_smem_address =
             Q_tile_smem_address +
             ((lane_Q_smem_Br * HEAD_DIM) + lane_Q_smem_d) * sizeof(half);
         LDMATRIX_X4(R_Q[i][0], R_Q[i][1], R_Q[i][2], R_Q[i][3],
                     lane_Q_smem_address);
       }
-      // K | smem 2 register
+      // K | smem2register
       for (int i = 0; i < WARP_ITER_SEQLEN_K; i++) {
         uint32_t K_smem_warp_offset =
             warp_seqlen_qs_id * MMA_N * WARP_ITER_SEQLEN_K + i * MMA_N;
-        uint32_t lane_K_smem_Bc = K_smem_warp_offset + lane_id % 8;
-        uint32_t lane_K_smem_d = bk_d * MMA_K + ((lane_id / 8) % 2) * 8;
+        uint32_t lane_K_smem_Bc = K_smem_warp_offset + lane_id % MMA_N;
+        uint32_t lane_K_smem_d = bk_d * MMA_K + (lane_id / MMA_N) * 8;
         uint32_t lane_K_smem_address =
             K_tile_smem_address + (K_smem_select * KV_tile_size +
                                    lane_K_smem_Bc * HEAD_DIM + lane_K_smem_d) *
@@ -362,10 +365,12 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       lane_row_max_new[i][1] =
           warp_reduce_max<float, 4>(lane_row_max_new[i][1]);
       if (lane_id % 4 == 0) {
-        Bc_max_new_smem[warp_seqlen_qs_id * 32 + i * 16 + 0 * 8 + (lane_id / 4)]
-                       [warp_seqlen_k_id] = lane_row_max_new[i][0];
-        Bc_max_new_smem[warp_seqlen_qs_id * 32 + i * 16 + 1 * 8 + (lane_id / 4)]
-                       [warp_seqlen_k_id] = lane_row_max_new[i][1];
+        Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                        i * MMA_M + 0 * 8 + (lane_id / 4)][warp_seqlen_k_id] =
+            lane_row_max_new[i][0];
+        Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                        i * MMA_M + 1 * 8 + (lane_id / 4)][warp_seqlen_k_id] =
+            lane_row_max_new[i][1];
       }
     }
     __syncthreads();
@@ -383,10 +388,12 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     __syncthreads();
 
     for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
-      float Bc_row_max_0 = Bc_max_new_smem[warp_seqlen_qs_id * 32 + i * 16 +
-                                           0 * 8 + (lane_id / 4)][0];
-      float Bc_row_max_1 = Bc_max_new_smem[warp_seqlen_qs_id * 32 + i * 16 +
-                                           1 * 8 + (lane_id / 4)][0];
+      float Bc_row_max_0 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 0 * 8 + (lane_id / 4)][0];
+      float Bc_row_max_1 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 1 * 8 + (lane_id / 4)][0];
 
       float Bc_row_max_old_0 = lane_Bc_max_old[i][0];
       float Bc_row_max_old_1 = lane_Bc_max_old[i][1];
@@ -417,10 +424,12 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
           warp_reduce_sum<float, 4>(lane_row_sum_new[i][1]);
 
       if (lane_id % 4 == 0) {
-        Bc_sum_new_smem[warp_seqlen_qs_id * 32 + i * 16 + 0 * 8 + (lane_id / 4)]
-                       [warp_seqlen_k_id] = lane_row_sum_new[i][0];
-        Bc_sum_new_smem[warp_seqlen_qs_id * 32 + i * 16 + 1 * 8 + (lane_id / 4)]
-                       [warp_seqlen_k_id] = lane_row_sum_new[i][1];
+        Bc_sum_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                        i * MMA_M + 0 * 8 + (lane_id / 4)][warp_seqlen_k_id] =
+            lane_row_sum_new[i][0];
+        Bc_sum_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                        i * MMA_M + 1 * 8 + (lane_id / 4)][warp_seqlen_k_id] =
+            lane_row_sum_new[i][1];
       }
     }
     __syncthreads();
@@ -429,9 +438,184 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     float warp_row_sum =
         Bc_sum_new_smem[tid / WARP_NUM_SEQLEN_K][tid % WARP_NUM_SEQLEN_K];
     float block_row_sum = warp_reduce_sum<float, 4>(warp_row_sum);
-    Bc_sum_new_smem[tid / WARP_NUM_SEQLEN_K][tid % WARP_NUM_SEQLEN_K] = block_row_sum;
+    // only Bc_sum_new_smem[x][0] is correct
+    Bc_sum_new_smem[tid / WARP_NUM_SEQLEN_K][tid % WARP_NUM_SEQLEN_K] =
+        block_row_sum;
     __syncthreads();
 
-    
+    // S is ready, compute O
+
+    for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
+      for (int j = 0; j < WARP_ITER_SEQLEN_K; j++) {
+        R_Q[0][0] = R_S[i][j][0];
+        R_Q[0][1] = __shfl_sync(0xffffffff, R_S[i][j][0], lane_id + 1, 4);
+        R_Q[0][2] = __shfl_sync(0xffffffff, R_S[i][j][0], lane_id + 2, 4);
+        R_Q[0][3] = __shfl_sync(0xffffffff, R_S[i][j][0], lane_id + 3, 4);
+
+        R_Q[1][0] = R_S[i][j][1];
+        R_Q[1][1] = __shfl_sync(0xffffffff, R_S[i][j][1], lane_id + 1, 4);
+        R_Q[1][2] = __shfl_sync(0xffffffff, R_S[i][j][1], lane_id + 2, 4);
+        R_Q[1][3] = __shfl_sync(0xffffffff, R_S[i][j][1], lane_id + 3, 4);
+
+        if (lane_id % 4 == 0) {
+          uint32_t store_S_smem_Br =
+              warp_seqlen_qs_id * (MMA_M * WARP_ITER_SEQLEN_QS) + i * MMA_M +
+              lane_id / 4;
+          uint32_t store_S_smem_Bc =
+              warp_seqlen_k_id * (MMA_N * WARP_ITER_SEQLEN_K) + j * MMA_N;
+          uint32_t store_smem_S_address_0 =
+              (store_S_smem_Br + 0) * Bc + store_S_smem_Bc;
+          uint32_t store_smem_S_address_1 =
+              (store_S_smem_Br + 8) * Bc + store_S_smem_Bc;
+          LDST128BITS(S_tile_smem[store_smem_S_address_0]) =
+              LDST128BITS(R_Q[0][0]);
+          LDST128BITS(S_tile_smem[store_smem_S_address_1]) =
+              LDST128BITS(R_Q[1][0]);
+        }
+      }
+    }
+    __syncthreads();
+    if constexpr (STAGE > 1) {
+      if (tile_K_seqlen + 1 < Tc) {
+        CP_ASYNC_WAIT_GROUP(1);
+      } else {
+        CP_ASYNC_WAIT_GROUP(0);
+      }
+    } else {
+      CP_ASYNC_WAIT_GROUP(0);
+    }
+    __syncthreads();
+    fill_3D_regs<uint32_t, WARP_ITER_SEQLEN_QS, WARP_ITER_HEAD_DIM_V, 2>(R_O,
+                                                                         0);
+    for (int bk_Bc = 0; bk_Bc < hidden_Bc_ITER; bk_Bc++) {
+      for (int i = 0; i < WARP_NUM_SEQLEN_QS; i++) {
+        uint32_t S_smem_warp_offset =
+            warp_seqlen_qs_id * MMA_M * WARP_ITER_SEQLEN_QS + i * MMA_M;
+        uint32_t lane_S_smem_Br = S_smem_warp_offset + lane_id % MMA_M;
+        uint32_t lane_S_smem_Bc = bk_Bc * MMA_K + (lane_id / MMA_M) * 8;
+        uint32_t lane_S_smem_address =
+            S_tile_smem_address +
+            (lane_S_smem_Br * Bc + lane_S_smem_Bc) * sizeof(half);
+        LDMATRIX_X4(R_Q[i][0], R_Q[i][1], R_Q[i][2], R_Q[i][3],
+                    lane_S_smem_address);
+      }
+      for (int i = 0; i < WARP_ITER_HEAD_DIM_V; i++) {
+        uint32_t V_smem_warp_offset =
+            warp_seqlen_k_id * MMA_N * WARP_ITER_HEAD_DIM_V + i * MMA_N;
+        uint32_t lane_V_smem_Bc = bk_Bc * MMA_K + lane_id % MMA_K;
+        uint32_t lane_V_smem_d = V_smem_warp_offset;
+        uint32_t lane_V_smem_address =
+            V_tile_smem_address +
+            (lane_V_smem_Bc * HEAD_DIM + lane_V_smem_d) * sizeof(half);
+        LDMATRIX_X2_T(R_V[i][0], R_V[i][0], lane_V_smem_address);
+      }
+
+      for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
+        for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
+          HMMA16816(R_O[i][j][0], R_O[i][j][1], R_Q[i][0], R_Q[i][1], R_Q[i][2],
+                    R_Q[i][3], R_V[j][0], R_V[j][1], R_O[i][j][0],
+                    R_O[i][j][1]);
+        }
+      }
+    }
+    __syncthreads();
+    for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
+      float Bc_row_max_0 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 0 * 8 + (lane_id / 4)][0];
+      float Bc_row_max_1 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 1 * 8 + (lane_id / 4)][0];
+      float Bc_row_sum_0 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 0 * 8 + (lane_id / 4)][0];
+      float Bc_row_sum_1 =
+          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+                          i * MMA_M + 1 * 8 + (lane_id / 4)][0];
+      float Bc_row_max_old_0 = lane_Bc_max_old[i][0];
+      float Bc_row_max_old_1 = lane_Bc_max_old[i][1];
+
+      Bc_row_max_0 = max(Bc_row_max_0, Bc_row_max_old_0);
+      Bc_row_max_1 = max(Bc_row_max_1, Bc_row_max_old_1);
+
+      Bc_row_max_old_0 = (tile_K_seqlen > 0) ? Bc_row_max_old_0 : Bc_row_max_0;
+      Bc_row_max_old_1 = (tile_K_seqlen > 0) ? Bc_row_max_old_1 : Bc_row_max_1;
+
+      float rescale_o_factor_0 = __expf(Bc_row_max_old_0 - Bc_row_max_0);
+      float rescale_o_factor_1 = __expf(Bc_row_max_old_1 - Bc_row_max_1);
+
+      for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
+        float2 t_reg_O_0 = __half22float2(HALF2(R_O[i][j][0]));
+        float2 t_reg_O_1 = __half22float2(HALF2(R_O[i][j][1]));
+        float2 t_reg_D_0 = __half22float2(HALF2(R_Final[i][j][0]));
+        float2 t_reg_D_1 = __half22float2(HALF2(R_Final[i][j][1]));
+
+        t_reg_D_0.x = __fmaf_rn(rescale_o_factor_0, t_reg_D_0.x, t_reg_O_0.x);
+        t_reg_D_0.y = __fmaf_rn(rescale_o_factor_0, t_reg_D_0.y, t_reg_O_0.y);
+        t_reg_D_1.x = __fmaf_rn(rescale_o_factor_1, t_reg_D_1.x, t_reg_O_1.x);
+        t_reg_D_1.y = __fmaf_rn(rescale_o_factor_1, t_reg_D_1.y, t_reg_O_1.y);
+        HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_D_0);
+        HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_D_1);
+      }
+      float Bc_row_sum_old_0 = lane_Bc_sum_old[i][0];
+      float Bc_row_sum_old_1 = lane_Bc_sum_old[i][1];
+
+      lane_Bc_sum_old[i][0] =
+          __fmaf_rn(rescale_o_factor_0, Bc_row_sum_old_0, Bc_row_sum_0);
+      lane_Bc_sum_old[i][1] =
+          __fmaf_rn(rescale_o_factor_1, Bc_row_sum_old_1, Bc_row_sum_1);
+      lane_Bc_max_old[i][0] = Bc_row_max_0;
+      lane_Bc_max_old[i][1] = Bc_row_max_1;
+    }
+    if constexpr (STAGE > 1) {
+      if ((tile_K_seqlen + 1) < Tc) {
+        CP_ASYNC_WAIT_GROUP(0);
+      }
+      __syncthreads();
+    }
+  }
+  __syncthreads();
+
+  for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
+    float rescale_factor_0 = __frcp_rn(lane_Bc_sum_old[i][0]);
+    float rescale_factor_1 = __frcp_rn(lane_Bc_sum_old[i][1]);
+    for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
+      float2 t_reg_D_0 = __half22float2(HALF2(R_Final[i][j][0]));
+      float2 t_reg_D_1 = __half22float2(HALF2(R_Final[i][j][1]));
+      t_reg_D_0.x = rescale_factor_0 * t_reg_D_0.x;
+      t_reg_D_0.y = rescale_factor_0 * t_reg_D_0.y;
+      t_reg_D_1.x = rescale_factor_1 * t_reg_D_1.x;
+      t_reg_D_1.y = rescale_factor_1 * t_reg_D_1.y;
+      HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_D_0);
+      HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_D_1);
+    }
+  }
+
+  for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
+    for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
+      R_Q[0][0] = R_Final[i][j][0];
+      R_Q[1][0] = R_Final[i][j][1];
+      R_Q[0][1] = __shfl_sync((0xffffffff), R_Final[i][j][0], lane_id + 1, 4);
+      R_Q[0][2] = __shfl_sync((0xffffffff), R_Final[i][j][0], lane_id + 2, 4);
+      R_Q[0][3] = __shfl_sync((0xffffffff), R_Final[i][j][0], lane_id + 3, 4);
+      R_Q[1][1] = __shfl_sync((0xffffffff), R_Final[i][j][1], lane_id + 1, 4);
+      R_Q[1][2] = __shfl_sync((0xffffffff), R_Final[i][j][1], lane_id + 2, 4);
+      R_Q[1][3] = __shfl_sync((0xffffffff), R_Final[i][j][1], lane_id + 3, 4);
+
+      if (lane_id % 4 == 0) {
+        uint32_t store_O_gmem_Br =
+            warp_seqlen_qs_id * (MMA_M * WARP_ITER_SEQLEN_QS) + i * MMA_M +
+            lane_id / 4;
+        uint32_t store_O_gmem_d =
+            warp_seqlen_k_id * (MMA_N * WARP_ITER_HEAD_DIM_V) + j * MMA_N;
+        uint32_t store_gmem_O_address_0 =
+            O_gmem_offset + (store_O_gmem_Br + 0) * HEAD_DIM + store_O_gmem_d;
+        uint32_t store_gmem_O_address_1 =
+            O_gmem_offset + (store_O_gmem_Br + 8) * HEAD_DIM + store_O_gmem_d;
+
+        LDST128BITS(O[store_gmem_O_address_0]) = LDST128BITS(R_Q[0][0]);
+        LDST128BITS(O[store_gmem_O_address_0]) = LDST128BITS(R_Q[1][0]);
+      }
+    }
   }
 }
