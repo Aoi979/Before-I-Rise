@@ -1,4 +1,6 @@
+#ifdef __clang__
 #include <__clang_cuda_math.h>
+#endif
 #ifdef __clang__
 #include <__clang_cuda_runtime_wrapper.h>
 #endif
@@ -207,8 +209,9 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   uint32_t V_tile_smem_address = __cvta_generic_to_shared(&V_tile_smem[0]);
   uint32_t S_tile_smem_address = __cvta_generic_to_shared(&S_tile_smem[0]);
 
-  float lane_Bc_max_old[WARP_ITER_SEQLEN_QS][2] = -INFINITY;
-  float lane_Bc_sum_old[WARP_ITER_SEQLEN_QS][2] = 0.0f;
+  float lane_Bc_max_old[WARP_ITER_SEQLEN_QS][2];
+  fill_2D_regs<float, WARP_ITER_SEQLEN_QS, 2>(lane_Bc_max_old, -INFINITY);
+  float lane_Bc_sum_old[WARP_ITER_SEQLEN_QS][2] = {};
 
   __shared__ float Bc_max_new_smem[Br][WARP_NUM_SEQLEN_K];
   __shared__ float Bc_sum_new_smem[Br][WARP_NUM_SEQLEN_K];
@@ -222,11 +225,11 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   // 16 * 8
   REG_SIZE_T R_V[WARP_ITER_HEAD_DIM_V][2];
   // 16 * 8
-  REG_SIZE_T R_S[WARP_ITER_SEQLEN_QS][WARP_ITER_SEQLEN_K][2] = 0.0f;
+  REG_SIZE_T R_S[WARP_ITER_SEQLEN_QS][WARP_ITER_SEQLEN_K][2] = {};
   // 16 * 8
-  REG_SIZE_T R_O[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = 0.0f;
+  REG_SIZE_T R_O[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = {};
   // 16 * 8
-  REG_SIZE_T R_Final[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = 0.0f;
+  REG_SIZE_T R_Final[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = {};
 
   // load Q, gmem to smem, only once
   {
@@ -347,8 +350,9 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       }
     }
     __syncthreads();
-    float lane_row_max_new[WARP_ITER_SEQLEN_QS][2] = -INFINITY;
-    float lane_row_sum_new[WARP_ITER_SEQLEN_QS][2] = 0.0f;
+    float lane_row_max_new[WARP_ITER_SEQLEN_QS][2];
+    fill_2D_regs<float, WARP_NUM_SEQLEN_QS, 2>(lane_row_max_new, -INFINITY);
+    float lane_row_sum_new[WARP_ITER_SEQLEN_QS][2] = {};
 
     // warp level reduce max and store to smem
     for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
@@ -547,15 +551,19 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
         float2 t_reg_O_0 = __half22float2(HALF2(R_O[i][j][0]));
         float2 t_reg_O_1 = __half22float2(HALF2(R_O[i][j][1]));
-        float2 t_reg_D_0 = __half22float2(HALF2(R_Final[i][j][0]));
-        float2 t_reg_D_1 = __half22float2(HALF2(R_Final[i][j][1]));
+        float2 t_reg_Final_0 = __half22float2(HALF2(R_Final[i][j][0]));
+        float2 t_reg_Final_1 = __half22float2(HALF2(R_Final[i][j][1]));
 
-        t_reg_D_0.x = __fmaf_rn(rescale_o_factor_0, t_reg_D_0.x, t_reg_O_0.x);
-        t_reg_D_0.y = __fmaf_rn(rescale_o_factor_0, t_reg_D_0.y, t_reg_O_0.y);
-        t_reg_D_1.x = __fmaf_rn(rescale_o_factor_1, t_reg_D_1.x, t_reg_O_1.x);
-        t_reg_D_1.y = __fmaf_rn(rescale_o_factor_1, t_reg_D_1.y, t_reg_O_1.y);
-        HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_D_0);
-        HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_D_1);
+        t_reg_Final_0.x =
+            __fmaf_rn(rescale_o_factor_0, t_reg_Final_0.x, t_reg_O_0.x);
+        t_reg_Final_0.y =
+            __fmaf_rn(rescale_o_factor_0, t_reg_Final_0.y, t_reg_O_0.y);
+        t_reg_Final_1.x =
+            __fmaf_rn(rescale_o_factor_1, t_reg_Final_1.x, t_reg_O_1.x);
+        t_reg_Final_1.y =
+            __fmaf_rn(rescale_o_factor_1, t_reg_Final_1.y, t_reg_O_1.y);
+        HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_Final_0);
+        HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_Final_1);
       }
       float Bc_row_sum_old_0 = lane_Bc_sum_old[i][0];
       float Bc_row_sum_old_1 = lane_Bc_sum_old[i][1];
@@ -580,14 +588,14 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     float rescale_factor_0 = __frcp_rn(lane_Bc_sum_old[i][0]);
     float rescale_factor_1 = __frcp_rn(lane_Bc_sum_old[i][1]);
     for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
-      float2 t_reg_D_0 = __half22float2(HALF2(R_Final[i][j][0]));
-      float2 t_reg_D_1 = __half22float2(HALF2(R_Final[i][j][1]));
-      t_reg_D_0.x = rescale_factor_0 * t_reg_D_0.x;
-      t_reg_D_0.y = rescale_factor_0 * t_reg_D_0.y;
-      t_reg_D_1.x = rescale_factor_1 * t_reg_D_1.x;
-      t_reg_D_1.y = rescale_factor_1 * t_reg_D_1.y;
-      HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_D_0);
-      HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_D_1);
+      float2 t_reg_Final_0 = __half22float2(HALF2(R_Final[i][j][0]));
+      float2 t_reg_Final_1 = __half22float2(HALF2(R_Final[i][j][1]));
+      t_reg_Final_0.x = rescale_factor_0 * t_reg_Final_0.x;
+      t_reg_Final_0.y = rescale_factor_0 * t_reg_Final_0.y;
+      t_reg_Final_1.x = rescale_factor_1 * t_reg_Final_1.x;
+      t_reg_Final_1.y = rescale_factor_1 * t_reg_Final_1.y;
+      HALF2(R_Final[i][j][0]) = __float22half2_rn(t_reg_Final_0);
+      HALF2(R_Final[i][j][1]) = __float22half2_rn(t_reg_Final_1);
     }
   }
 

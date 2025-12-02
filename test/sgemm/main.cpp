@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <iomanip>
-#include "../../include/before_i_rise.h"
+#include <before_i_rise.h>
 #include <cstdlib>
 #include <cmath>
 
