@@ -1,3 +1,4 @@
+#include <vector>
 #ifdef __clang__
 #include <__clang_cuda_math.h>
 #endif
@@ -232,6 +233,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   REG_SIZE_T R_Final[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = {};
 
   // load Q, gmem to smem, only once
+  // TODO: optimize
   {
     for (int i = 0; i < Br / load_smem_Q_stride; i++) {
       uint32_t load_gmem_Q =
@@ -244,6 +246,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     CP_ASYNC_COMMIT_GROUP();
   }
 
+  // only support STAGE == 2
   if constexpr (STAGE > 1) {
     for (int stage = 0; stage < STAGE - 1; stage++) {
       for (int i = 0; i < Bc / load_smem_KV_stride; i++) {
@@ -262,7 +265,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       CP_ASYNC_COMMIT_GROUP();
     }
     // (STAGE - 1) - 1 = STAGE - 2
-    // wait Q and 1 K stage
+    // wait Q and at least 1 K stage
     CP_ASYNC_WAIT_GROUP(STAGE - 2);
     __syncthreads();
   }
@@ -291,7 +294,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
         CP_ASYNC_COMMIT_GROUP();
       }
 
-      // NOTE: load next stage (only STGAE == 2) asynchronously
+      // NOTE: load next K stage (only STGAE == 2) asynchronously
       if ((tile_K_seqlen + 1) < Tc) {
         for (int i = 0; i < load_smem_KV_stride; i++) {
 
@@ -479,6 +482,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       }
     }
     __syncthreads();
+    // wait V
     if constexpr (STAGE > 1) {
       if (tile_K_seqlen + 1 < Tc) {
         CP_ASYNC_WAIT_GROUP(1);
@@ -575,6 +579,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       lane_Bc_max_old[i][0] = Bc_row_max_0;
       lane_Bc_max_old[i][1] = Bc_row_max_1;
     }
+    // wait next K
     if constexpr (STAGE > 1) {
       if ((tile_K_seqlen + 1) < Tc) {
         CP_ASYNC_WAIT_GROUP(0);
@@ -627,3 +632,9 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     }
   }
 }
+
+template <int HEAD_DIM, int STAGE>
+void launch_flash_attn_mma_stages(std::vector<half> Q, std::vector<half> K,
+                                  std::vector<half> V, std::vector<half> O) {
+
+                                  }
