@@ -144,7 +144,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   constexpr uint32_t THREAD_SIZE =
       WARP_NUM_SEQLEN_K * WARP_NUM_SEQLEN_QS * WARP_SIZE;
 
-  constexpr float scale = 1.0f / sqrt(HEAD_DIM);
+  float scale = 1.0f / sqrt(float(HEAD_DIM));
 
   uint32_t QKV_batch_id = blockIdx.z;
   uint32_t QKV_head_id = blockIdx.y;
@@ -156,8 +156,8 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   uint32_t warp_seqlen_qs_id = warp_id % WARP_NUM_SEQLEN_QS;
   uint32_t warp_seqlen_k_id = warp_id / WARP_NUM_SEQLEN_QS;
 
-  constexpr uint32_t QKV_HEAD_SIZE = QKV_seqlen * HEAD_DIM;
-  constexpr uint32_t BATCH_SIZE = QKV_HEADS * QKV_HEAD_SIZE;
+  uint32_t QKV_HEAD_SIZE = QKV_seqlen * HEAD_DIM;
+  uint32_t BATCH_SIZE = QKV_HEADS * QKV_HEAD_SIZE;
 
   // Q, K, V, O [seqlen, head_dim]
   uint32_t Q_gmem_offset = QKV_batch_id * BATCH_SIZE +
@@ -193,27 +193,20 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   constexpr uint32_t KV_tile_size = Bc * HEAD_DIM;
   constexpr uint32_t S_tile_size = Br * Bc;
 
-  using array_Q = half(*)[Q_tile_size];
-  using array2d_K = half(*)[KV_tile_size];
-  using array_V = half(*)[KV_tile_size];
-  using array_S = half(*)[S_tile_size];
+  auto Q_tile_smem = sram;
+  auto K_tile_smem = Q_tile_smem + Q_tile_size;
+  auto V_tile_smem = K_tile_smem + STAGE * KV_tile_size;
 
-  auto Q_tile_smem = reinterpret_cast<array_Q>(sram);
-  auto K_tile_smem = reinterpret_cast<array2d_K>(&sram[Q_tile_size]);
-  auto V_tile_smem =
-      reinterpret_cast<array_V>(&sram[Q_tile_size + STAGE * KV_tile_size]);
+  auto S_tile_smem = V_tile_smem + KV_tile_size;
 
-  auto S_tile_smem = reinterpret_cast<array_S>(&V_tile_smem[0] + KV_tile_size);
-
-  uint32_t Q_tile_smem_address = __cvta_generic_to_shared(&Q_tile_smem[0]);
-  uint32_t K_tile_smem_address = __cvta_generic_to_shared(&K_tile_smem[0][0]);
-  uint32_t V_tile_smem_address = __cvta_generic_to_shared(&V_tile_smem[0]);
-  uint32_t S_tile_smem_address = __cvta_generic_to_shared(&S_tile_smem[0]);
+  uint32_t Q_tile_smem_address = __cvta_generic_to_shared(Q_tile_smem);
+  uint32_t K_tile_smem_address = __cvta_generic_to_shared(K_tile_smem);
+  uint32_t V_tile_smem_address = __cvta_generic_to_shared(V_tile_smem);
+  uint32_t S_tile_smem_address = __cvta_generic_to_shared(S_tile_smem);
 
   float lane_Bc_max_old[WARP_ITER_SEQLEN_QS][2];
   fill_2D_regs<float, WARP_ITER_SEQLEN_QS, 2>(lane_Bc_max_old, -INFINITY);
   float lane_Bc_sum_old[WARP_ITER_SEQLEN_QS][2] = {};
-
   __shared__ float Bc_max_new_smem[Br][WARP_NUM_SEQLEN_K];
   __shared__ float Bc_sum_new_smem[Br][WARP_NUM_SEQLEN_K];
 
@@ -233,20 +226,19 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   REG_SIZE_T R_Final[WARP_ITER_SEQLEN_QS][WARP_ITER_HEAD_DIM_V][2] = {};
 
   // load Q, gmem to smem, only once
-  // TODO: optimize
   {
     for (int i = 0; i < Br / load_smem_Q_stride; i++) {
       uint32_t load_gmem_Q =
           Q_gmem_offset + (load_smem_Q_Br + i * load_smem_Q_stride) * HEAD_DIM +
           load_smem_Q_d;
       uint32_t load_smem_Q =
-          Q_tile_smem_address + (load_smem_Q_Br + i) * HEAD_DIM + load_smem_Q_d;
+          Q_tile_smem_address +
+          ((load_smem_Q_Br + i) * HEAD_DIM + load_smem_Q_d) * sizeof(half);
       CP_ASYNC_CG(load_smem_Q, &Q[load_gmem_Q], 16);
     }
     CP_ASYNC_COMMIT_GROUP();
   }
 
-  // only support STAGE == 2
   if constexpr (STAGE > 1) {
     for (int stage = 0; stage < STAGE - 1; stage++) {
       for (int i = 0; i < Bc / load_smem_KV_stride; i++) {
@@ -265,7 +257,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       CP_ASYNC_COMMIT_GROUP();
     }
     // (STAGE - 1) - 1 = STAGE - 2
-    // wait Q and at least 1 K stage
+    // wait Q and 1 K stage
     CP_ASYNC_WAIT_GROUP(STAGE - 2);
     __syncthreads();
   }
@@ -278,7 +270,6 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       // load V asynchronously
       {
         for (int i = 0; i < Bc / load_smem_KV_stride; i++) {
-
           uint32_t V_Bc_gmem_offset = tile_K_seqlen * Bc;
           uint32_t load_gmem_V = V_gmem_offset + V_Bc_gmem_offset * HEAD_DIM +
                                  load_smem_KV_Bc * HEAD_DIM +
@@ -294,10 +285,9 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
         CP_ASYNC_COMMIT_GROUP();
       }
 
-      // NOTE: load next K stage (only STGAE == 2) asynchronously
+      // NOTE: load next stage (only STGAE == 2) asynchronously
       if ((tile_K_seqlen + 1) < Tc) {
-        for (int i = 0; i < load_smem_KV_stride; i++) {
-
+        for (int i = 0; i < Bc / load_smem_KV_stride; i++) {
           uint32_t K_Bc_gmem_offset = (tile_K_seqlen + 1) * Bc;
           uint32_t load_gmem_K = K_gmem_offset + K_Bc_gmem_offset * HEAD_DIM +
                                  load_smem_KV_Bc * HEAD_DIM +
@@ -354,9 +344,8 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
     }
     __syncthreads();
     float lane_row_max_new[WARP_ITER_SEQLEN_QS][2];
-    fill_2D_regs<float, WARP_NUM_SEQLEN_QS, 2>(lane_row_max_new, -INFINITY);
+    fill_2D_regs<float, WARP_ITER_SEQLEN_QS, 2>(lane_row_max_new, -INFINITY);
     float lane_row_sum_new[WARP_ITER_SEQLEN_QS][2] = {};
-
     // warp level reduce max and store to smem
     for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
       for (int j = 0; j < WARP_ITER_SEQLEN_K; j++) {
@@ -418,7 +407,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
         t_reg_S_1.y = __expf(__fmaf_rn(t_reg_S_1.y, scale, -Bc_row_max_1));
 
         lane_row_sum_new[i][0] += t_reg_S_0.x + t_reg_S_0.y;
-        lane_row_sum_new[i][0] += t_reg_S_1.x + t_reg_S_1.y;
+        lane_row_sum_new[i][1] += t_reg_S_1.x + t_reg_S_1.y;
 
         HALF2(R_S[i][j][0]) = __float22half2_rn(t_reg_S_0);
         HALF2(R_S[i][j][1]) = __float22half2_rn(t_reg_S_1);
@@ -482,7 +471,6 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       }
     }
     __syncthreads();
-    // wait V
     if constexpr (STAGE > 1) {
       if (tile_K_seqlen + 1 < Tc) {
         CP_ASYNC_WAIT_GROUP(1);
@@ -515,7 +503,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
         uint32_t lane_V_smem_address =
             V_tile_smem_address +
             (lane_V_smem_Bc * HEAD_DIM + lane_V_smem_d) * sizeof(half);
-        LDMATRIX_X2_T(R_V[i][0], R_V[i][0], lane_V_smem_address);
+        LDMATRIX_X2_T(R_V[i][0], R_V[i][1], lane_V_smem_address);
       }
 
       for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
@@ -535,10 +523,10 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
           Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
                           i * MMA_M + 1 * 8 + (lane_id / 4)][0];
       float Bc_row_sum_0 =
-          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+          Bc_sum_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
                           i * MMA_M + 0 * 8 + (lane_id / 4)][0];
       float Bc_row_sum_1 =
-          Bc_max_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
+          Bc_sum_new_smem[warp_seqlen_qs_id * (WARP_ITER_SEQLEN_QS * MMA_M) +
                           i * MMA_M + 1 * 8 + (lane_id / 4)][0];
       float Bc_row_max_old_0 = lane_Bc_max_old[i][0];
       float Bc_row_max_old_1 = lane_Bc_max_old[i][1];
@@ -579,7 +567,6 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
       lane_Bc_max_old[i][0] = Bc_row_max_0;
       lane_Bc_max_old[i][1] = Bc_row_max_1;
     }
-    // wait next K
     if constexpr (STAGE > 1) {
       if ((tile_K_seqlen + 1) < Tc) {
         CP_ASYNC_WAIT_GROUP(0);
@@ -625,16 +612,58 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
             O_gmem_offset + (store_O_gmem_Br + 0) * HEAD_DIM + store_O_gmem_d;
         uint32_t store_gmem_O_address_1 =
             O_gmem_offset + (store_O_gmem_Br + 8) * HEAD_DIM + store_O_gmem_d;
-
         LDST128BITS(O[store_gmem_O_address_0]) = LDST128BITS(R_Q[0][0]);
-        LDST128BITS(O[store_gmem_O_address_0]) = LDST128BITS(R_Q[1][0]);
+        LDST128BITS(O[store_gmem_O_address_1]) = LDST128BITS(R_Q[1][0]);
       }
     }
   }
 }
 
 template <int HEAD_DIM, int STAGE>
-void launch_flash_attn_mma_stages(std::vector<half> Q, std::vector<half> K,
-                                  std::vector<half> V, std::vector<half> O) {
+void launch_flash_attn_mma_stages(std::vector<half> &Q, std::vector<half> &K,
+                                  std::vector<half> &V, std::vector<half> &O,
+                                  uint32_t seqlen) {
+  constexpr uint32_t warp_size = 32;
+  constexpr uint32_t MMA_M = 16;
+  constexpr uint32_t MMA_K = 16;
+  constexpr uint32_t MMA_N = 8;
+  constexpr uint32_t WARP_ITER_SEQLEN_QS = 2;
+  constexpr uint32_t WARP_ITER_SEQLEN_K = 2;
+  constexpr uint32_t WARP_NUM_SEQLEN_K = 4;
+  constexpr uint32_t WARP_NUM_SEQLEN_QS = 2;
+  constexpr uint32_t Br = 64;
+  constexpr uint32_t Bc = 64;
+  constexpr uint32_t threads =
+      WARP_NUM_SEQLEN_K * WARP_NUM_SEQLEN_QS * warp_size;
+  const uint32_t Q_smem_size = Br * HEAD_DIM;
+  const uint32_t K_stages_smem_size = Bc * HEAD_DIM * STAGE;
+  const uint32_t V_smem_size = Bc * HEAD_DIM;
+  const uint32_t S_smem_size = Bc * Br;
+  const uint32_t smem_size =
+      (Q_smem_size + K_stages_smem_size + V_smem_size + S_smem_size) *
+      sizeof(half);
+  dim3 block(threads, 1, 1);
+  dim3 grid(seqlen / Br, 1, 1);
 
-                                  }
+  half *dQ, *dK, *dV, *dO;
+  cudaMalloc(&dQ, Q.size() * sizeof(half));
+  cudaMalloc(&dK, K.size() * sizeof(half));
+  cudaMalloc(&dV, V.size() * sizeof(half));
+  cudaMalloc(&dO, O.size() * sizeof(half));
+
+  cudaMemcpy(dQ, Q.data(), Q.size() * sizeof(half), cudaMemcpyHostToDevice);
+  cudaMemcpy(dK, K.data(), K.size() * sizeof(half), cudaMemcpyHostToDevice);
+  cudaMemcpy(dV, V.data(), V.size() * sizeof(half), cudaMemcpyHostToDevice);
+
+  cudaFuncSetAttribute(v2_fwd_kernel<1, HEAD_DIM, MMA_M, MMA_N, MMA_K, STAGE>,
+                       cudaFuncAttributeMaxDynamicSharedMemorySize, 98304);
+  v2_fwd_kernel<1, HEAD_DIM, MMA_M, MMA_N, MMA_K, STAGE>
+      <<<grid, block, smem_size>>>(dQ, dK, dV, dO, seqlen);
+
+  cudaMemcpy(O.data(), dO, O.size() * sizeof(half), cudaMemcpyDeviceToHost);
+
+  cudaFree(dQ);
+  cudaFree(dK);
+  cudaFree(dV);
+  cudaFree(dO);
+}
