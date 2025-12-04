@@ -619,6 +619,26 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   }
 }
 
+
+template <int const QKV_HEADS, int const HEAD_DIM, int const MMA_M,
+          int const MMA_N, int const MMA_K, int const STAGE, int const Bc = 64,
+          int const WARP_NUM_SEQLEN_QS = 2, int const WARP_NUM_SEQLEN_K = 4>
+__global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
+                              int QKV_seqlen) {
+
+
+
+
+
+
+
+
+
+
+
+
+
+                              }
 template <int HEAD_DIM, int STAGE>
 void launch_flash_attn_mma_stages(std::vector<half> &Q, std::vector<half> &K,
                                   std::vector<half> &V, std::vector<half> &O,

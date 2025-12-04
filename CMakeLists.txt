@@ -10,6 +10,8 @@ file(GLOB_RECURSE BEFORE_I_RISE_CU
         "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu"
 )
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 add_library(before_i_rise STATIC ${BEFORE_I_RISE_CU})
 
 set_target_properties(before_i_rise PROPERTIES
