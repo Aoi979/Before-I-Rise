@@ -32,5 +32,5 @@ ncu-ui ncu/xxxx.ncu-rep
 - 📘 [优化记录：docs/sgemm.md](docs/sgemm.md)
 ### HGEMM
 - 📘 [优化记录 :docs/hgemm.md](docs/hgemm.md)
-
-
+### FA
+- 📘 [优化记录 :docs/fa.md](docs/fa.md)
