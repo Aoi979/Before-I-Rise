@@ -620,6 +620,14 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
   }
 }
 
+// only supports HEAD_DIM == 64(half); for other cases, you need to convert from
+// logical coordinates to bank coordinates yourself
+template <const int kColStride = 64, const int kStep = 8>
+static __device__ __forceinline__ uint32_t
+favsq_swizzle_permuted_j(uint32_t i, uint32_t j) {
+  return (i ^ j / 8) % 8 * 8;
+}
+
 // target_seq_len == src_seq_len
 // model_dim == v_head_dim
 // Br == 64
@@ -722,7 +730,6 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
   float lane_Bc_max_old[WARP_ITER_SEQLEN_QS][2];
   fill_2D_regs<float, WARP_ITER_SEQLEN_QS, 2>(lane_Bc_max_old, -INFINITY);
   float lane_Bc_sum_old[WARP_ITER_SEQLEN_QS][2] = {};
-
 
   using REG_SIZE_T = uint32_t;
 
@@ -876,7 +883,7 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
       lane_row_max_new[i][1] =
           warp_reduce_max<float, 4>(lane_row_max_new[i][1]);
     }
-  
+
     for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
       float Bc_row_max_0 = lane_row_max_new[i][0];
       float Bc_row_max_1 = lane_row_max_new[i][0];
@@ -938,9 +945,9 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
       int idx = bk_Bc * 2;
       for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
         for (int j = 0; j < WARP_ITER_HEAD_DIM_V; j++) {
-          HMMA16816(R_O[i][j][0], R_O[i][j][1], R_S[i][idx][0], R_S[i][idx][1], R_S[i][idx+1][0],
-                    R_S[i][idx+1][1], R_V[j][0], R_V[j][1], R_O[i][j][0],
-                    R_O[i][j][1]);
+          HMMA16816(R_O[i][j][0], R_O[i][j][1], R_S[i][idx][0], R_S[i][idx][1],
+                    R_S[i][idx + 1][0], R_S[i][idx + 1][1], R_V[j][0],
+                    R_V[j][1], R_O[i][j][0], R_O[i][j][1]);
         }
       }
     }
