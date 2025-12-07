@@ -625,7 +625,7 @@ __global__ void v2_fwd_kernel(half *Q, half *K, half *V, half *O,
 template <const int kColStride = 64, const int kStep = 8>
 static __device__ __forceinline__ uint32_t
 favsq_swizzle_permuted_j(uint32_t i, uint32_t j) {
-  return (i ^ j / 8) % 8 * 8;
+  return (i ^ (j / 8)) % 8 * 8;
 }
 
 // target_seq_len == src_seq_len
@@ -634,6 +634,7 @@ favsq_swizzle_permuted_j(uint32_t i, uint32_t j) {
 // split_q
 // 可参考 docs/draw/fa.excalidraw
 // STAGE == 1 or 2
+// HEAD_DIM == 64
 template <int const QKV_HEADS, int const HEAD_DIM, int const MMA_M,
           int const MMA_N, int const MMA_K, int const STAGE, int const Bc = 64,
           int const WARP_NUM_SEQLEN_QS = 4, int const WARP_NUM_SEQLEN_K = 1>
@@ -771,7 +772,9 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
         uint32_t load_smem_K =
             K_tile_smem_address +
             (stage * KV_tile_size + load_smem_KV_Bc * HEAD_DIM +
-             i * load_smem_KV_stride * HEAD_DIM + load_smem_KV_d) *
+             i * load_smem_KV_stride * HEAD_DIM +
+             favsq_swizzle_permuted_j(load_smem_KV_Bc + i * load_smem_KV_stride,
+                                      load_smem_KV_d)) *
                 sizeof(half);
         CP_ASYNC_CG(load_smem_K, &K[load_gmem_K], 16);
       }
@@ -799,7 +802,8 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
           uint32_t load_smem_V =
               V_tile_smem_address +
               (load_smem_KV_Bc * HEAD_DIM + i * load_smem_KV_stride * HEAD_DIM +
-               load_smem_KV_d) *
+               favsq_swizzle_permuted_j(
+                   load_smem_KV_Bc + i * load_smem_KV_stride, load_smem_KV_d)) *
                   sizeof(half);
           CP_ASYNC_CG(load_smem_V, &V[load_gmem_V], 16);
         }
@@ -817,7 +821,9 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
           uint32_t load_smem_K =
               K_tile_smem_address +
               (K_smem_select_next * KV_tile_size + load_smem_KV_Bc * HEAD_DIM +
-               i * load_smem_KV_stride * HEAD_DIM + load_smem_KV_d) *
+               i * load_smem_KV_stride * HEAD_DIM +
+               favsq_swizzle_permuted_j(
+                   load_smem_KV_Bc + i * load_smem_KV_stride, load_smem_KV_d)) *
                   sizeof(half);
           CP_ASYNC_CG(load_smem_K, &K[load_gmem_K], 16);
         }
@@ -839,7 +845,9 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
         uint32_t lane_Q_smem_d = bk_d * MMA_K + (lane_id / MMA_M) * 8;
         uint32_t lane_Q_smem_address =
             Q_tile_smem_address +
-            ((lane_Q_smem_Br * HEAD_DIM) + lane_Q_smem_d) * sizeof(half);
+            ((lane_Q_smem_Br * HEAD_DIM) +
+             favsq_swizzle_permuted_j(lane_Q_smem_Br, lane_Q_smem_d)) *
+                sizeof(half);
         LDMATRIX_X4(R_Q[i][0], R_Q[i][1], R_Q[i][2], R_Q[i][3],
                     lane_Q_smem_address);
       }
@@ -850,9 +858,10 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
         uint32_t lane_K_smem_Bc = K_smem_warp_offset + lane_id % MMA_N;
         uint32_t lane_K_smem_d = bk_d * MMA_K + (lane_id / MMA_N) * 8;
         uint32_t lane_K_smem_address =
-            K_tile_smem_address + (K_smem_select * KV_tile_size +
-                                   lane_K_smem_Bc * HEAD_DIM + lane_K_smem_d) *
-                                      sizeof(half);
+            K_tile_smem_address +
+            (K_smem_select * KV_tile_size + lane_K_smem_Bc * HEAD_DIM +
+             favsq_swizzle_permuted_j(lane_K_smem_Bc, lane_K_smem_d)) *
+                sizeof(half);
         LDMATRIX_X2(R_K[i][0], R_K[i][1], lane_K_smem_address);
       }
       for (int i = 0; i < WARP_ITER_SEQLEN_QS; i++) {
@@ -938,7 +947,9 @@ __global__ void flash_attn_v2_split_q(half *Q, half *K, half *V, half *O,
         uint32_t lane_V_smem_d = V_smem_warp_offset;
         uint32_t lane_V_smem_address =
             V_tile_smem_address +
-            (lane_V_smem_Bc * HEAD_DIM + lane_V_smem_d) * sizeof(half);
+            (lane_V_smem_Bc * HEAD_DIM +
+             favsq_swizzle_permuted_j(lane_V_smem_Bc, lane_V_smem_d)) *
+                sizeof(half);
         LDMATRIX_X2_T(R_V[i][0], R_V[i][1], lane_V_smem_address);
       }
 
