@@ -1,5 +1,6 @@
 #include "../util/util.h"
 #include <cuda_fp16.h>
+#include <cstdint>
 #define WARP_NUM 4
 #define WARP_SIZE 32
 #define THREADS_PER_BLOCK 128
