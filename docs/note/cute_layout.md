@@ -1,5 +1,7 @@
 # CuTe Layout笔记
 > 并不严谨
+
+cutlass3引入cute,cute的layout抽象很强大，但由于资料介绍不到位导致这部分不是那么好懂，为了理解其本质，这里记录一些相关内容
 ## *Layout*
 一个布局$L$是由一对具有相同维度的正整数元组$S$和$D$组成的，其中$S$被称为*shape*,$D$为*stride*，写作$L = S:D$
 
@@ -91,3 +93,87 @@ f_L(x) = \sum_{i=0}^{\alpha}f_L(x_i) = \sum_{i=0}^{i'-1}f_L(x_i) + f_L(x') + \su
 $$
 这个写法不严谨，因为*mode*改变了，$f_L$也发生了变化，应该分解$f_L$到各个*mode*得到$f_{L_i}$，总之就这个意思
 ## 补集
+### 排序布局
+设$L=(N_i)_{i=0}^{\alpha}:(d_i)_{i=0}^{\alpha}$, 如果$d_0 \le d_1 \le ...\le d_\alpha$且如果$d_i=d_j$,那么$N_i \le N_j$
+
+排序后的布局改变了布局的意义，因为*mode*的顺序被交换了,但其点积的本质导致函数的签名不会改变
+
+### 可补
+设$A=(N_i)_{i=0}^{\alpha}:(d_i)_{i=0}^{\alpha}$, $M$为一个正整数， 如果$A$未排序那么将$A$替换为其排序版本$A'$,若满足以下条件则称$\{A,M\}$可补
+
+- $d_i \bmod N_{i-1}d_{i-1} = 0$
+- $M \bmod N_\alpha d_\alpha = 0$
+
+
+### 补集
+设$A=(N_i)_{i=0}^{\alpha}:(d_i)_{i=0}^{\alpha}$, $M$为一个正整数， 如果$\{A,M\}$是可补的，则其补集定义为
+$$
+complement(A,M) = (d_0,\frac{d_1}{N_0d_0},...,\frac{d_\alpha}{N_{\alpha-1}d_{\alpha-1}},\frac{M}{N_\alpha d_\alpha}):(1,N_0d_0,...,N_\alpha d_\alpha)
+$$
+不难看出其是排序好的，严格递增的,当$x+1$,可能会在新的一个维度上进一，而$N_{i+1}d_{i+1} >(\frac{d_{i+1}}{N_id_i}-1)N_id_i$,即$N_{i+1} > 1-\frac{N_id_i}{d_{i+1}}$ , 由于$d_i \bmod N_{i-1}d_{i-1} = 0$，故$\frac{N_id_i}{d_{i+1}} \le 1$,不等式成立
+
+$complement(A,M)$的大小为$\frac{M}{size(A)}=\frac{M}{\prod_{i=0}^{\alpha} N_i}$
+
+当我们将$complement(A,M)$与$A$拼(*连接并按某种规则交换mode*)在一起会得到
+$$
+(d_0,N_0,\frac{d_1}{N_0d_0},N_1,...,\frac{d_\alpha}{N_{\alpha-1}d_{\alpha-1}},N_\alpha,\frac{M}{N_\alpha d_\alpha}):(1,d_0,N_0d_0,d_1,...,N_{\alpha-1} d_{\alpha-1},d_\alpha,N_\alpha d_\alpha)
+$$
+可合并为
+$$
+(M)：(1)
+$$
+虽然不一定按这种方便的情况去排布但我们知道*mode*的交换不会影响$f_L：[0,M) \rightarrow [0,M)的性质$
+
+## 组合
+因为是函数，自然可以$g(f(x))$这样使用，记$f*g(x)$为$f与g的组合$，有
+$$
+y=g(f(x)) = f*g(x)
+$$
+显然$f(x)的值域需要是g(x)定义域的子集$，且$f*g(x)$的定义域和$f(x)$相同，考虑一个简单的情况$x \in [0,M), f(x)=x, g(f(x)) = g(x) = g((x_i)_{i=0}^{\alpha}) = \sum_{i=0}^{\alpha}g(x_i)$，其过程为
+$$
+x \mapsto (x_0,x_1,...,x_\alpha)
+$$
+$$
+y = f((x_i)_{i=0}^{\alpha}) = x_0d_0 + x_1d_1 + ... + x_\alpha d_\alpha
+$$
+$$
+y \mapsto (x_0',x_1',...,x_{\alpha'}') 
+$$
+$$
+z = g((x_i')_{i=0}^{\alpha'}) = x_0'd_0' + x_1'd_1' + ... + x_{\alpha'}' d_{\alpha'}'
+$$
+若我们能够找出一个$L$能直接描述这种映射关系，则是可组合的，在上面的例子中
+$$
+(x_0',x_1',...,x_{\alpha'}') = (x_0,x_1,...,x_\alpha)
+$$
+$$
+g((x_i')_{i=0}^{\alpha'}) = x_0d_0' + x_1d_1' + ... + x_{\alpha} d_{\alpha}'
+$$
+$$
+f*g(x) = g(x)
+$$
+同理可以有
+$$
+(x_0',x_1',...,x_{\alpha'}') = a(x_0,x_1,...,x_\alpha)
+$$
+$$
+g((x_i')_{i=0}^{\alpha'}) = ax_0d_0' + ax_1d_1' + ... + ax_{\alpha} d_{\alpha}'
+$$
+$$
+f*g(x) = ag(x)
+$$
+### 左可除性
+设$M,d >0$,为正整数，设$M=M_0M_1...M_\alpha$为一种可能的分解，我们说$M$对于$d$是左可除的，如果存在$0 \le i\le \alpha$满足
+
+
+- $d \bmod M_0M_1...M_{i-1} == 0$  
+- 上一个条件下，$c=\frac{d}{M_0M_1...M_{i-1}}$, 如果$i<\alpha$,还需要满足$1 \le c \le M_i$
+- 上一个条件下，如果$i<\alpha$ ,还需要$M_i \bmod c==0$
+
+
+
+若满足前两个条件而不满足第三条，则称为弱左可除
+
+
+对于一个$M=M_0M_1...M_\alpha$,可表示为$M=M_0M_1...M_{i-1}c \frac{M_i}{c} M_{i+1}...M_\alpha$
+
